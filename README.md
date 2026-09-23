@@ -1,6 +1,6 @@
 # slowboard-mcp
 
-A local MCP server that lets Claude read your Slow Board boards. One file, no
+A local MCP server that lets Claude read -- and, with a writing key, write and draw on -- your Slow Board boards. One file, no
 dependencies: Node 18 or later is all it needs.
 
 It runs on your own machine. Claude Code or Claude Desktop starts it and talks to
@@ -17,6 +17,15 @@ so a tool call costs exactly one API call -- and a key may make 120 a minute.
 | `get_item` | One thing whole: a discussion with replies, decisions, action points and files; a conversation's lines; a kanban's columns and cards; a canvas's text and arrows |
 | `list_conversations` | Your direct conversations |
 | `get_conversation` | One of them, line by line |
+| `create_discussion` | Start a discussion on a board you choose, with a title and a Markdown body |
+| `create_surface` | Make a canvas or kanban on a board, named as you say |
+| `reply` | Reply to a discussion |
+| `send_message` | Write a line in a board conversation or one of your direct conversations |
+| `add_task` | Add an action point -- who, what, by when -- to anything by its number |
+| `draw` | Draw on a canvas or kanban: real shapes, text, arrows, columns and cards, not a picture |
+
+The last six write, as you, and need a key made with **Allow writing**.
+Everything they write is marked via API on the board.
 
 Answers are short text rather than JSON, because the model reads every character a
 tool returns. `get_item` cuts long answers at `max_chars` (12,000 by default) and

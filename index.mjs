@@ -32,19 +32,21 @@ const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 class ApiError extends Error {}
 
-async function api(path, query = {}) {
+async function api(path, query = {}, body) {
   if (!/^cmk_[0-9a-f]{64}$/i.test(KEY)) {
     throw new ApiError('BOARD_API_KEY is not set, or is not a key. Make one in the board\'s Settings, under API, and put it in this server\'s env.')
   }
   const url = new URL(BASE + path)
   for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v))
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${KEY}`, Accept: 'application/json' },
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { Authorization: `Bearer ${KEY}`, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(20_000),
   })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new ApiError(body.error ?? `The API answered ${res.status}.`)
-  return body
+  const answer = await res.json().catch(() => ({}))
+  if (!res.ok) throw new ApiError(answer.error ?? `The API answered ${res.status}.`)
+  return answer
 }
 
 // ── turning answers into short text ─────────────────────────────────────────
@@ -132,9 +134,10 @@ function itemText(it) {
 
   if (it.kind === 'kanban') {
     const parts = [...head, '']
+    // Ids in brackets, so draw can move, rename or remove what is already there.
     for (const c of it.columns ?? []) {
-      parts.push(`## ${c.title || 'Untitled'} (${c.cards.length})`)
-      for (const card of c.cards) parts.push(`- ${oneLine(card.text, 300) || 'Untitled'}${card.keywords?.length ? ` [${card.keywords.join(', ')}]` : ''}`)
+      parts.push(`## ${c.title || 'Untitled'} [${c.id}] (${c.cards.length})`)
+      for (const card of c.cards) parts.push(`- [${card.id}] ${oneLine(card.text, 300) || 'Untitled'}${card.keywords?.length ? ` [${card.keywords.join(', ')}]` : ''}`)
       parts.push('')
     }
     return parts.join('\n')
@@ -144,8 +147,14 @@ function itemText(it) {
     const els = it.elements ?? []
     const byId = new Map(els.map((e) => [e.id, e]))
     const label = (id) => oneLine(byId.get(id)?.text, 60) || id
-    const parts = [...head, `${els.length} elements.`, '', 'Text on it:']
-    for (const e of els) if (e.type !== 'connector' && e.text?.trim()) parts.push(`- ${oneLine(e.text, 300)}${e.keywords?.length ? ` [${e.keywords.join(', ')}]` : ''}`)
+    // Each element with its id and box, so draw can connect to it, move it, or
+    // place new things beside it. World units; x grows right, y grows down.
+    const parts = [...head, `${els.length} elements.`, '', 'Elements [id] type at x,y wxh:']
+    for (const e of els) {
+      if (e.type === 'connector') continue
+      const words = e.text?.trim() ? ` "${oneLine(e.text, 200)}"` : ''
+      parts.push(`- [${e.id}] ${e.shape && e.type === 'shape' ? e.shape : e.type}${words} at ${Math.round(e.x)},${Math.round(e.y)} ${Math.round(e.w)}x${Math.round(e.h)}${e.keywords?.length ? ` [${e.keywords.join(', ')}]` : ''}${e.via_api ? ' (via API)' : ''}`)
+    }
     const links = els.filter((e) => e.type === 'connector' && e.from && e.to)
     if (links.length) {
       parts.push('', 'Arrows:')
@@ -237,6 +246,134 @@ const TOOLS = [
     run: async ({ id, limit = 150, before, max_chars = 12000, offset = 0 }) =>
       window(itemText(await api(`/api/v1/conversations/${encodeURIComponent(id)}`, { limit, before })), offset, max_chars),
   },
+
+  // ── writing: needs a key made with "Allow writing" ─────────────────────────
+  {
+    name: 'create_discussion',
+    description: 'Start a new discussion on a board, as the key\'s owner (marked via API). Choose the board by slug; body is Markdown. Answers with its number.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('The board slug from list_boards.'),
+        title: str('The discussion\'s title.'),
+        body: str('Its contents, in Markdown.'),
+        keywords: { type: 'array', items: { type: 'string' }, description: 'Keywords to file it under.' },
+      },
+      required: ['board', 'title', 'body'],
+      additionalProperties: false,
+    },
+    run: async ({ board, title, body, keywords }) => {
+      const r = await api(`/api/v1/boards/${encodeURIComponent(board)}`, {}, { type: 'discussion', title, body, keywords })
+      return `Made discussion #${r.number} on ${r.board}.`
+    },
+  },
+  {
+    name: 'create_surface',
+    description: 'Make a new canvas or kanban on a board, named as you say. Answers with its number; then draw on it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('The board slug.'),
+        kind: { type: 'string', enum: ['canvas', 'kanban'], description: 'A canvas (shapes, text, arrows) or a kanban (columns of cards).' },
+        title: str('Its name, three characters or more.'),
+      },
+      required: ['board', 'kind', 'title'],
+      additionalProperties: false,
+    },
+    run: async ({ board, kind, title }) => {
+      const r = await api(`/api/v1/boards/${encodeURIComponent(board)}`, {}, { type: kind, title })
+      return `Made ${r.kind} #${r.number} on ${r.board}. Draw on it with draw(board, ${r.number}, ops).`
+    },
+  },
+  {
+    name: 'reply',
+    description: 'Reply to a discussion, as the key\'s owner (marked via API). Markdown body; title optional.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('The board slug.'),
+        number: int('The discussion\'s number.'),
+        body: str('The reply, in Markdown.'),
+        title: str('An optional heading for a long reply.'),
+      },
+      required: ['board', 'number', 'body'],
+      additionalProperties: false,
+    },
+    run: async ({ board, number, body, title }) => {
+      await api(`/api/v1/boards/${encodeURIComponent(board)}/items/${number}`, {}, { action: 'reply', body, title })
+      return `Replied on #${number}.`
+    },
+  },
+  {
+    name: 'send_message',
+    description: 'Write a line in a conversation, as the key\'s owner (marked via API): a board conversation by board and number, or a direct conversation by its id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        body: str('The line.'),
+        board: str('For a board conversation: the board slug.'),
+        number: int('For a board conversation: its number.'),
+        conversation_id: str('For a direct conversation: the id from list_conversations.'),
+      },
+      required: ['body'],
+      additionalProperties: false,
+    },
+    run: async ({ body, board, number, conversation_id }) => {
+      if (conversation_id) {
+        await api(`/api/v1/conversations/${encodeURIComponent(conversation_id)}`, {}, { body })
+        return 'Sent.'
+      }
+      if (!board || !number) throw new ApiError('Give board and number for a board conversation, or conversation_id for a direct one.')
+      await api(`/api/v1/boards/${encodeURIComponent(board)}/items/${number}`, {}, { action: 'message', body })
+      return `Sent in #${number}.`
+    },
+  },
+  {
+    name: 'add_task',
+    description: 'Add an action point -- who does what by when -- to a discussion, conversation, canvas or kanban by its number. The assignee is a person\'s name as the board shows it, or their email.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('The board slug.'),
+        number: int('The number of the thing it belongs to.'),
+        body: str('What needs doing.'),
+        assignee: str('Who has it, by name or email. Optional.'),
+        due: str('By when, YYYY-MM-DD. Optional.'),
+      },
+      required: ['board', 'number', 'body'],
+      additionalProperties: false,
+    },
+    run: async ({ board, number, body, assignee, due }) => {
+      await api(`/api/v1/boards/${encodeURIComponent(board)}/items/${number}`, {}, { action: 'task', body, assignee, due })
+      return `Added the action point to #${number}.`
+    },
+  },
+  {
+    name: 'draw',
+    description: [
+      'Draw on a canvas or kanban directly: real shapes, text, arrows, columns and cards that people can then move and edit -- not a picture.',
+      'Canvas ops: {op:"shape", ref, text, shape?:"process"|"decision"|"terminator"|"data"|"ellipse"|"document"|"frame", x?, y?, w?:220, h?:110, fill?:"#rrggbb"}, {op:"text", ref, text, x, y, size?:16},',
+      '{op:"connect", from, to, text?, dashed?, ends?:"arrow"|"none"|"double", route?:"elbow"|"straight"}, {op:"update", id, text?, x?, y?, w?, h?, fill?}, {op:"delete", id}, {op:"tag", id, keywords}.',
+      'Kanban ops: {op:"column", ref, title}, {op:"card", ref, column (id, ref or title), text, keywords?}, {op:"move_card", card, column, index?}, {op:"update", id, text}, {op:"delete", id}.',
+      'from/to/id/column take an element id from get_item or a ref made earlier in the same call. Shapes without x,y are laid out left to right by their arrows, beside what is already there.',
+      'Coordinates are world units, x right, y down; boxes are about 220x110, so space them ~300 apart. Read the surface with get_item first to see what is there.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('The board slug.'),
+        number: int('The canvas or kanban number.'),
+        ops: { type: 'array', items: { type: 'object' }, description: 'The operations, in order. At most 200.' },
+      },
+      required: ['board', 'number', 'ops'],
+      additionalProperties: false,
+    },
+    run: async ({ board, number, ops }) => {
+      const r = await api(`/api/v1/boards/${encodeURIComponent(board)}/items/${number}`, {}, { action: 'draw', ops })
+      const refs = Object.entries(r.created ?? {}).map(([k, v]) => `${k}=${v}`).join(', ')
+      return [`Drew on ${r.kind} #${number}: ${r.appended ?? 0} changes.`, refs ? `Refs: ${refs}` : '', ...(r.done ?? []).slice(0, 40).map((d) => `- ${d}`)].filter(Boolean).join('\n')
+    },
+  },
 ]
 
 // ── the protocol: JSON-RPC 2.0, one message per line on stdin/stdout ────────
@@ -259,7 +396,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Read-only access to the board app. Start with list_boards, then list_items for a board, then get_item for the numbers that matter. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Pick the board by slug and the thing by its number. To draw, read the surface with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return
