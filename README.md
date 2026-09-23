@@ -17,6 +17,13 @@ so a tool call costs exactly one API call -- and a key may make 120 a minute.
 | `get_item` | One thing whole: a discussion with replies, decisions, action points and files; a conversation's lines; a kanban's columns and cards; a canvas's text and arrows |
 | `list_conversations` | Your direct conversations |
 | `get_conversation` | One of them, line by line |
+| `search` | Words anywhere -- discussions, replies, canvases and kanbans, conversations, lines, and the words inside files -- with where each hit is and the text around it. Korean works |
+| `recent` | What moved since a time, across every board and your direct conversations |
+| `list_actions` | Action points across boards, with where each lives. By default only what is still to do |
+| `list_decisions` | The decision log, with the discussion each decision was filed against |
+| `list_keywords` | Every keyword, with how many things carry it |
+| `get_keyword` | Everything filed under one keyword |
+| `read_file` | A file's details and the text extracted from inside it, in windows |
 | `create_discussion` | Start a discussion on a board you choose, with a title and a Markdown body |
 | `create_surface` | Make a canvas or kanban on a board, named as you say |
 | `reply` | Reply to a discussion |
@@ -31,8 +38,11 @@ so a tool call costs exactly one API call -- and a key may make 120 a minute.
 
 Everything from `create_discussion` down writes, as you, and needs a key made with
 **Allow writing**. Everything written is marked via API on the board, and an edit
-is marked edited via API. The edit tools change only what you could change on
-screen: your own posts and lines, and what a curator may edit if you are one.
+is marked edited via API. The edit tools change only your own words: your
+discussions, replies and lines, action points you have or raised, surfaces you
+made -- even if you are a curator who could edit more on screen. On a canvas or
+kanban, `draw` moves, resizes and tags anything, but rewrites or removes only
+what you drew.
 `get_item` shows the id of every reply, line and action point in brackets, which
 is what the edit tools take.
 
@@ -45,7 +55,7 @@ says which `offset` to ask for next.
 1. On the board, open **Settings**, then **API**, and make a key. It is shown once,
    and that page then shows the commands below with your key already in them.
    A key reads exactly what you can read on the board. It writes and edits only if
-   made with **Allow writing**, and then only what you could on screen.
+   made with **Allow writing**, and then edits only what you wrote.
 2. Get this server:
 
    ```bash

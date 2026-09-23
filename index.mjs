@@ -25,7 +25,7 @@ import { createInterface } from 'node:readline'
 
 const KEY = process.env.BOARD_API_KEY ?? ''
 const BASE = (process.env.BOARD_API_URL ?? 'https://slow-board.vercel.app').replace(/\/+$/, '')
-const VERSION = '1.1.0'
+const VERSION = '1.2.0'
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 // ── the API ─────────────────────────────────────────────────────────────────
@@ -173,6 +173,68 @@ function itemText(it) {
   return JSON.stringify(it)
 }
 
+// Where a result lives, as the other tools take it.
+function whereOf(x) {
+  if (x.conversation_id) return `direct conversation ${x.conversation_id}`
+  if (x.board && x.number != null) return `${x.board} #${x.number}`
+  return x.board ?? ''
+}
+
+function searchText(r) {
+  const lines = [`Search: "${r.q}"${r.board ? ` on ${r.board}` : ''}`]
+  if (r.keywords?.length) lines.push(`Keywords containing it: ${r.keywords.map((k) => `${k.keyword} (${k.uses})`).join(', ')} -- get_keyword lists what is filed under one.`)
+  lines.push('')
+  const results = r.results ?? []
+  if (!results.length) lines.push('No matches.')
+  for (const h of results) {
+    const id = h.id ? ` [${h.id}]` : ''
+    const head = h.kind === 'file' ? `file${id}: ${h.title} (${h.mime}, matched in the ${h.matched})` : `${h.kind}${id} in ${whereOf(h)}: ${h.title ?? ''}`
+    lines.push(`- ${head} -- ${h.by ? `${h.by}, ` : ''}${day(h.at)}`)
+    if (h.snippet && h.snippet !== h.title) lines.push(`    ${oneLine(h.snippet, 240)}`)
+  }
+  return lines.join('\n')
+}
+
+function recentText(r) {
+  const items = r.items ?? []
+  const lines = [`Since ${String(r.since).slice(0, 16).replace('T', ' ')}: ${items.length} ${items.length === 1 ? 'thing' : 'things'} moved.`, '']
+  for (const i of items) {
+    lines.push(`- ${i.new ? 'new ' : ''}${i.kind} ${whereOf(i)}: ${i.title} -- ${i.by ?? 'someone'}, active ${String(i.updated_at).slice(0, 16).replace('T', ' ')}`)
+    if (i.excerpt) lines.push(`    ${oneLine(i.excerpt, 140)}`)
+  }
+  if (r.more) lines.push('', 'More moved than shown: narrow with board, or a later since.')
+  return lines.join('\n')
+}
+
+function actionsListText(r) {
+  const list = r.actions ?? []
+  if (!list.length) return 'No action points.'
+  return list
+    .map((a) => `- [${a.id}] [${a.state}] ${a.body}${a.assignee ? ` -- ${a.assignee}` : ' -- nobody'}${a.due_on ? `, by ${a.due_on}` : ''}${a.blocked_reason ? ` (blocked: ${a.blocked_reason})` : ''} -- on ${a.place ? `${a.place.kind} ${whereOf(a.place)}: ${a.place.title}` : 'somewhere this key cannot see'}`)
+    .join('\n')
+}
+
+function decisionsText(r) {
+  const list = r.decisions ?? []
+  if (!list.length) return 'No decisions recorded.'
+  return list
+    .map((d) => `- ${d.withdrawn_at ? `(withdrawn ${day(d.withdrawn_at)}) ` : ''}${d.summary} -- ${d.by ?? 'someone'}, ${day(d.decided_at)}, on ${d.discussion.board} #${d.discussion.number}: ${d.discussion.title}`)
+    .join('\n')
+}
+
+function fileText(f, offset) {
+  const lines = [`File [${f.id}]: ${f.name} (${f.mime}, ${f.bytes} bytes), ${f.by ?? 'someone'}, ${day(f.created_at)}`]
+  if (f.place) lines.push(`On ${f.place.kind} ${whereOf(f.place)}: ${f.place.title}`)
+  if (f.keywords?.length) lines.push(`Keywords: ${f.keywords.join(', ')}`)
+  lines.push(`Open in the app (signed in): ${f.url}`, '')
+  if (!f.text_length) lines.push('No text was extracted from this file (an image, or a format the board does not read).')
+  else {
+    lines.push(`Text (${offset}-${offset + (f.text?.length ?? 0)} of ${f.text_length} characters):`, '', f.text ?? '')
+    if (f.next_offset != null) lines.push('', `[More: call read_file again with offset=${f.next_offset}.]`)
+  }
+  return lines.join('\n')
+}
+
 function conversationsText(r) {
   const list = r.conversations ?? []
   if (!list.length) return 'No direct conversations.'
@@ -253,6 +315,103 @@ const TOOLS = [
     },
     run: async ({ id, limit = 150, before, max_chars = 12000, offset = 0 }) =>
       window(itemText(await api(`/api/v1/conversations/${encodeURIComponent(id)}`, { limit, before })), offset, max_chars),
+  },
+
+  // ── across boards: the board as an archive ─────────────────────────────────
+  {
+    name: 'search',
+    description:
+      'Search everything the key can read for words: discussions (title and body), replies, canvases and kanbans (name and excerpt), conversations, lines, and files (name and the words inside). Korean works. Each hit gives where it is (board #number, or a reply/line/file id) and the text around the match; open one with get_item or read_file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        q: str('The words, two characters or more. Matched as written, not as a pattern.'),
+        board: str('Only this board (slug).'),
+        kind: { type: 'string', enum: ['discussion', 'reply', 'canvas', 'kanban', 'conversation', 'line', 'file'], description: 'Only this kind.' },
+        limit: int('Hits per kind, default 10, at most 50.'),
+      },
+      required: ['q'],
+      additionalProperties: false,
+    },
+    run: async ({ q, board, kind, limit }) => searchText(await api('/api/v1/search', { q, board, kind, limit })),
+  },
+  {
+    name: 'recent',
+    description: 'What moved since a time, across every board the key reaches and your direct conversations: what is new and what changed. Use it to catch up.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        since: str('An ISO date or time, like 2026-09-20. Default: a week ago.'),
+        board: str('Only this board (slug).'),
+        limit: int('How many, default 50, at most 200.'),
+      },
+      additionalProperties: false,
+    },
+    run: async ({ since, board, limit }) => recentText(await api('/api/v1/recent', { since, board, limit })),
+  },
+  {
+    name: 'list_actions',
+    description: 'Action points across boards -- who does what by when -- each with where it lives and its [id] for update_task. By default only what is still to do.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        state: { type: 'string', enum: ['open', 'blocked', 'done', 'dropped', 'all'], description: 'Default: open and blocked.' },
+        assignee: str('"me", or a person\'s name or email.'),
+        board: str('Only this board (slug).'),
+        limit: int('How many, default 100.'),
+      },
+      additionalProperties: false,
+    },
+    run: async ({ state, assignee, board, limit }) => actionsListText(await api('/api/v1/actions', { state, assignee, board, limit })),
+  },
+  {
+    name: 'list_decisions',
+    description: 'The decision log: what was decided, by whom, when, and on which discussion. Newest first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('Only this board (slug).'),
+        withdrawn: { type: 'boolean', description: 'Include decisions that were later withdrawn.' },
+        limit: int('How many, default 100.'),
+      },
+      additionalProperties: false,
+    },
+    run: async ({ board, withdrawn, limit }) => decisionsText(await api('/api/v1/decisions', { board, withdrawn: withdrawn ? 1 : undefined, limit })),
+  },
+  {
+    name: 'list_keywords',
+    description: 'Every keyword things are filed under, with how many carry it.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    run: async () => {
+      const r = await api('/api/v1/keywords')
+      return (r.keywords ?? []).length ? r.keywords.map((k) => `${k.keyword} (${k.uses})`).join(', ') : 'No keywords yet.'
+    },
+  },
+  {
+    name: 'get_keyword',
+    description: 'Everything filed under one keyword: discussions, canvases, kanbans, conversations and files.',
+    inputSchema: { type: 'object', properties: { keyword: str('The keyword.') }, required: ['keyword'], additionalProperties: false },
+    run: async ({ keyword }) => {
+      const r = await api(`/api/v1/keywords/${encodeURIComponent(keyword)}`)
+      const items = r.items ?? []
+      if (!items.length) return `Nothing is filed under "${r.keyword}".`
+      return [`Filed under "${r.keyword}":`, ...items.map((i) => (i.kind === 'file' ? `- file [${i.id}]: ${i.title}` : `- ${i.kind} ${whereOf(i)}: ${i.title}`))].join('\n')
+    },
+  },
+  {
+    name: 'read_file',
+    description: 'A file\'s details and the words extracted from inside it (a PDF\'s or a text file\'s), by the id search, get_item or get_keyword gives. Long text comes in windows; pass offset to continue.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: str('The file id.'),
+        offset: { type: 'integer', minimum: 0, description: 'Where to continue from, in characters.' },
+        max_chars: int('How much text, default 12000.'),
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    run: async ({ id, offset = 0, max_chars = 12000 }) => fileText(await api(`/api/v1/files/${encodeURIComponent(id)}`, { offset, limit: max_chars }), offset),
   },
 
   // ── writing: needs a key made with "Allow writing" ─────────────────────────
@@ -364,6 +523,7 @@ const TOOLS = [
       '{op:"connect", from, to, text?, dashed?, ends?:"arrow"|"none"|"double", route?:"elbow"|"straight"}, {op:"update", id, text?, x?, y?, w?, h?, fill?}, {op:"delete", id}, {op:"tag", id, keywords}.',
       'Kanban ops: {op:"column", ref, title}, {op:"card", ref, column (id, ref or title), text, keywords?}, {op:"move_card", card, column, index?}, {op:"update", id, text}, {op:"delete", id}.',
       'from/to/id/column take an element id from get_item or a ref made earlier in the same call. Shapes without x,y are laid out left to right by their arrows, beside what is already there.',
+      'Changing the text of, or deleting, an element someone else made is refused; moving, resizing, tagging and moving cards are allowed.',
       'Coordinates are world units, x right, y down; boxes are about 220x110, so space them ~300 apart. Read the surface with get_item first to see what is there.',
     ].join(' '),
     inputSchema: {
@@ -386,7 +546,7 @@ const TOOLS = [
   // ── editing: the same writing key; only what the owner could edit on screen ──
   {
     name: 'edit_discussion',
-    description: 'Edit a discussion\'s title, body or keywords (marked edited via API). Give only what changes; the rest stays. Earlier versions are kept.',
+    description: 'Edit one of the owner\'s own discussions: title, body or keywords (marked edited via API). Other people\'s are refused, even for a curator. Give only what changes; the rest stays. Earlier versions are kept.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -516,7 +676,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key; only what the owner could edit on screen): edit_discussion, edit_reply, edit_message, update_task, rename_surface -- by the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item. Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s extracted text). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key; only the owner\'s own words): edit_discussion, edit_reply, edit_message, update_task, rename_surface -- by the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return
