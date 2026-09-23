@@ -1,11 +1,11 @@
 # slowboard-mcp
 
-A local MCP server that lets Claude read -- and, with a writing key, write and draw on -- your Slow Board boards. One file, no
+A local MCP server that lets Claude read -- and, with a writing key, write, edit and draw on -- your Slow Board boards. One file, no
 dependencies: Node 18 or later is all it needs.
 
 It runs on your own machine. Claude Code or Claude Desktop starts it and talks to
 it over stdin/stdout; when Claude calls a tool, it makes one short request to the
-board's read-only API and returns. Nothing is hosted and nothing stays connected,
+board's API and returns. Nothing is hosted and nothing stays connected,
 so a tool call costs exactly one API call -- and a key may make 120 a minute.
 
 ## Tools
@@ -22,10 +22,19 @@ so a tool call costs exactly one API call -- and a key may make 120 a minute.
 | `reply` | Reply to a discussion |
 | `send_message` | Write a line in a board conversation or one of your direct conversations |
 | `add_task` | Add an action point -- who, what, by when -- to anything by its number |
-| `draw` | Draw on a canvas or kanban: real shapes, text, arrows, columns and cards, not a picture |
+| `draw` | Draw on a canvas or kanban: real shapes, text, arrows, columns and cards, not a picture -- and move, change or remove what is there |
+| `edit_discussion` | Change a discussion's title, body or keywords |
+| `edit_reply` | Change one of your replies |
+| `edit_message` | Change one of your lines, on a board or in a direct conversation |
+| `update_task` | Change an action point: open, blocked (with the reason), done or dropped; what it says; who has it; by when |
+| `rename_surface` | Rename a canvas or kanban |
 
-The last six write, as you, and need a key made with **Allow writing**.
-Everything they write is marked via API on the board.
+Everything from `create_discussion` down writes, as you, and needs a key made with
+**Allow writing**. Everything written is marked via API on the board, and an edit
+is marked edited via API. The edit tools change only what you could change on
+screen: your own posts and lines, and what a curator may edit if you are one.
+`get_item` shows the id of every reply, line and action point in brackets, which
+is what the edit tools take.
 
 Answers are short text rather than JSON, because the model reads every character a
 tool returns. `get_item` cuts long answers at `max_chars` (12,000 by default) and
@@ -35,7 +44,8 @@ says which `offset` to ask for next.
 
 1. On the board, open **Settings**, then **API**, and make a key. It is shown once,
    and that page then shows the commands below with your key already in them.
-   A key reads exactly what you can read on the board, and never writes.
+   A key reads exactly what you can read on the board. It writes and edits only if
+   made with **Allow writing**, and then only what you could on screen.
 2. Get this server:
 
    ```bash

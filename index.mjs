@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * slowboard-mcp: a local MCP server for Slow Board's read-only API.
+ * slowboard-mcp: a local MCP server for Slow Board's API.
  *
  * It runs on your own machine, started by Claude Code or Claude Desktop, and talks
  * to them over stdin/stdout. When Claude calls a tool it makes one short HTTPS
@@ -25,7 +25,7 @@ import { createInterface } from 'node:readline'
 
 const KEY = process.env.BOARD_API_KEY ?? ''
 const BASE = (process.env.BOARD_API_URL ?? 'https://slow-board.vercel.app').replace(/\/+$/, '')
-const VERSION = '1.0.0'
+const VERSION = '1.1.0'
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 // ── the API ─────────────────────────────────────────────────────────────────
@@ -95,10 +95,19 @@ function itemsText(r) {
   return lines.join('\n')
 }
 
+const edited = (x) => (x.edited_via_api ? ' (edited via API)' : x.edited_at ? ' (edited)' : '')
+
+// Every line, reply and action point carries its id in brackets, so the edit
+// tools can name it.
 function linesText(messages, nextBefore) {
-  const out = (messages ?? []).map((m) => `${m.by ?? 'someone'} (${String(m.posted_at).slice(0, 16).replace('T', ' ')}): ${m.body || '(a file)'}`)
+  const out = (messages ?? []).map((m) => `[${m.id}] ${m.by ?? 'someone'} (${String(m.posted_at).slice(0, 16).replace('T', ' ')}): ${m.body || '(a file)'}${edited(m)}`)
   if (nextBefore) out.unshift(`[Older lines exist: call again with before=${nextBefore}]`, '')
   return out.join('\n')
+}
+
+function actionsText(actions) {
+  if (!actions?.length) return []
+  return ['', 'Action points:', ...actions.map((a) => `- [${a.id}] [${a.state}] ${a.body}${a.assignee ? ` -- ${a.assignee}` : ''}${a.due_on ? `, by ${a.due_on}` : ''}${a.blocked_reason ? ` (blocked: ${a.blocked_reason})` : ''}`)]
 }
 
 function itemText(it) {
@@ -107,9 +116,9 @@ function itemText(it) {
   if (it.keywords?.length) head.push(`Keywords: ${it.keywords.join(', ')}`)
 
   if (it.kind === 'discussion') {
-    const parts = [...head, `By ${it.by ?? 'someone'}, ${day(it.created_at)}${it.edited_at ? `, edited ${day(it.edited_at)}` : ''}`, '', it.body ?? '']
+    const parts = [...head, `By ${it.by ?? 'someone'}, ${day(it.created_at)}${it.edited_at ? `, edited ${day(it.edited_at)}${it.edited_via_api ? ' via API' : ''}` : ''}`, '', it.body ?? '']
     for (const r of it.replies ?? []) {
-      parts.push('', `--- Reply by ${r.by ?? 'someone'}, ${day(r.posted_at)}${r.reply_to ? ' (answering another reply)' : ''}`)
+      parts.push('', `--- Reply [${r.id}] by ${r.by ?? 'someone'}, ${day(r.posted_at)}${r.reply_to ? ' (answering another reply)' : ''}${edited(r)}`)
       if (r.title) parts.push(`## ${r.title}`)
       parts.push(r.body ?? '')
     }
@@ -117,10 +126,7 @@ function itemText(it) {
       parts.push('', 'Decisions:')
       for (const d of it.decisions) parts.push(`- ${d.withdrawn_at ? '(withdrawn) ' : ''}${d.summary} -- ${d.by ?? 'someone'}, ${day(d.decided_at)}`)
     }
-    if (it.actions?.length) {
-      parts.push('', 'Action points:')
-      for (const a of it.actions) parts.push(`- [${a.state}] ${a.body}${a.assignee ? ` -- ${a.assignee}` : ''}${a.due_on ? `, by ${a.due_on}` : ''}${a.blocked_reason ? ` (blocked: ${a.blocked_reason})` : ''}`)
-    }
+    parts.push(...actionsText(it.actions))
     if (it.files?.length) {
       parts.push('', 'Files (open in the app, signed in):')
       for (const f of it.files) parts.push(`- ${f.name} (${f.mime}, ${f.bytes} bytes) ${f.url ?? ''}`)
@@ -129,7 +135,7 @@ function itemText(it) {
   }
 
   if (it.kind === 'conversation' || it.kind === 'direct') {
-    return [...head, '', linesText(it.messages, it.next_before)].join('\n')
+    return [...head, '', linesText(it.messages, it.next_before), ...actionsText(it.actions)].join('\n')
   }
 
   if (it.kind === 'kanban') {
@@ -140,6 +146,7 @@ function itemText(it) {
       for (const card of c.cards) parts.push(`- [${card.id}] ${oneLine(card.text, 300) || 'Untitled'}${card.keywords?.length ? ` [${card.keywords.join(', ')}]` : ''}`)
       parts.push('')
     }
+    parts.push(...actionsText(it.actions))
     return parts.join('\n')
   }
 
@@ -160,6 +167,7 @@ function itemText(it) {
       parts.push('', 'Arrows:')
       for (const l of links) parts.push(`- ${label(l.from)} -> ${label(l.to)}${l.text ? ` (${oneLine(l.text, 60)})` : ''}`)
     }
+    parts.push(...actionsText(it.actions))
     return parts.join('\n')
   }
   return JSON.stringify(it)
@@ -374,6 +382,118 @@ const TOOLS = [
       return [`Drew on ${r.kind} #${number}: ${r.appended ?? 0} changes.`, refs ? `Refs: ${refs}` : '', ...(r.done ?? []).slice(0, 40).map((d) => `- ${d}`)].filter(Boolean).join('\n')
     },
   },
+
+  // ── editing: the same writing key; only what the owner could edit on screen ──
+  {
+    name: 'edit_discussion',
+    description: 'Edit a discussion\'s title, body or keywords (marked edited via API). Give only what changes; the rest stays. Earlier versions are kept.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('The board slug.'),
+        number: int('The discussion\'s number.'),
+        title: str('A new title.'),
+        body: str('The whole new body, in Markdown.'),
+        keywords: { type: 'array', items: { type: 'string' }, description: 'The full new keyword list.' },
+      },
+      required: ['board', 'number'],
+      additionalProperties: false,
+    },
+    run: async ({ board, number, title, body, keywords }) => {
+      await api(`/api/v1/boards/${encodeURIComponent(board)}/items/${number}`, {}, { action: 'edit', title, body, keywords })
+      return `Edited #${number}.`
+    },
+  },
+  {
+    name: 'edit_reply',
+    description: 'Edit one of the owner\'s replies on a discussion, by the reply id get_item shows in brackets.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('The board slug.'),
+        number: int('The discussion\'s number.'),
+        reply_id: str('The reply\'s id, from get_item.'),
+        body: str('The whole new reply, in Markdown.'),
+        title: str('A new heading; an empty string removes it.'),
+      },
+      required: ['board', 'number', 'reply_id'],
+      additionalProperties: false,
+    },
+    run: async ({ board, number, reply_id, body, title }) => {
+      await api(`/api/v1/boards/${encodeURIComponent(board)}/items/${number}`, {}, { action: 'edit_reply', reply_id, body, title })
+      return `Edited the reply on #${number}.`
+    },
+  },
+  {
+    name: 'edit_message',
+    description: 'Edit one of the owner\'s lines, by the id get_item or get_conversation shows in brackets: in a board conversation (board and number) or a direct one (conversation_id).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message_id: str('The line\'s id.'),
+        body: str('The new line.'),
+        board: str('For a board conversation: the board slug.'),
+        number: int('For a board conversation: its number.'),
+        conversation_id: str('For a direct conversation: its id.'),
+      },
+      required: ['message_id', 'body'],
+      additionalProperties: false,
+    },
+    run: async ({ message_id, body, board, number, conversation_id }) => {
+      if (conversation_id) {
+        await api(`/api/v1/conversations/${encodeURIComponent(conversation_id)}`, {}, { action: 'edit', message_id, body })
+        return 'Edited the line.'
+      }
+      if (!board || !number) throw new ApiError('Give board and number for a board conversation, or conversation_id for a direct one.')
+      await api(`/api/v1/boards/${encodeURIComponent(board)}/items/${number}`, {}, { action: 'edit_message', message_id, body })
+      return `Edited the line in #${number}.`
+    },
+  },
+  {
+    name: 'update_task',
+    description: 'Change an action point, by the id get_item shows in brackets: its state (open, blocked -- which needs blocked_reason --, done, dropped), what it says, who has it, or by when. Give only what changes. assignee "" unassigns; due "" clears the date.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('The board slug the action point is on.'),
+        number: int('The number of the thing it belongs to.'),
+        task_id: str('The action point\'s id.'),
+        state: { type: 'string', enum: ['open', 'blocked', 'done', 'dropped'], description: 'Its new state.' },
+        blocked_reason: str('What is blocking it; required when state is blocked.'),
+        body: str('What needs doing, reworded.'),
+        assignee: str('Who has it now, by name or email; "" for nobody.'),
+        due: str('By when, YYYY-MM-DD; "" to clear.'),
+      },
+      required: ['board', 'number', 'task_id'],
+      additionalProperties: false,
+    },
+    run: async ({ board, number, task_id, state, blocked_reason, body, assignee, due }) => {
+      await api(`/api/v1/boards/${encodeURIComponent(board)}/items/${number}`, {}, {
+        action: 'update_task', task_id, state, blocked_reason, body,
+        assignee: assignee === '' ? null : assignee,
+        due: due === '' ? null : due,
+      })
+      return `Updated the action point on #${number}.`
+    },
+  },
+  {
+    name: 'rename_surface',
+    description: 'Rename a canvas or kanban. (Its contents are edited with draw: update, delete, move_card.)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('The board slug.'),
+        number: int('The canvas or kanban number.'),
+        title: str('The new name, three characters or more.'),
+      },
+      required: ['board', 'number', 'title'],
+      additionalProperties: false,
+    },
+    run: async ({ board, number, title }) => {
+      await api(`/api/v1/boards/${encodeURIComponent(board)}/items/${number}`, {}, { action: 'rename', title })
+      return `Renamed #${number}.`
+    },
+  },
 ]
 
 // ── the protocol: JSON-RPC 2.0, one message per line on stdin/stdout ────────
@@ -396,7 +516,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Pick the board by slug and the thing by its number. To draw, read the surface with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key; only what the owner could edit on screen): edit_discussion, edit_reply, edit_message, update_task, rename_surface -- by the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return
