@@ -1,0 +1,19 @@
+{
+  "name": "slowboard-mcp",
+  "version": "1.0.0",
+  "description": "A local MCP server that lets Claude read your Slow Board boards through its read-only API. One file, no dependencies.",
+  "type": "module",
+  "bin": {
+    "slowboard-mcp": "index.mjs"
+  },
+  "files": [
+    "index.mjs"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "check": "node --check index.mjs"
+  },
+  "private": true
+}
