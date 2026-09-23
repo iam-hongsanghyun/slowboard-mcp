@@ -24,7 +24,8 @@ says which `offset` to ask for next.
 
 ## Set up
 
-1. On the board, open **API** in the rail and make a key. It is shown once.
+1. On the board, open **Settings**, then **API**, and make a key. It is shown once,
+   and that page then shows the commands below with your key already in them.
    A key reads exactly what you can read on the board, and never writes.
 2. Get this server:
 
@@ -61,11 +62,11 @@ says which `offset` to ask for next.
 
 | Variable | Meaning |
 |---|---|
-| `BOARD_API_KEY` | Your key, from the board's API page. Required. |
+| `BOARD_API_KEY` | Your key, from the board's Settings, API. Required. |
 | `BOARD_API_URL` | Where the board is. Defaults to `https://slow-board.vercel.app`; set `http://localhost:3000` for a local dev server. |
 
-Keep the key out of anything you commit or paste. If it leaks, revoke it on the
-API page and make another; the old one stops working at once.
+Keep the key out of anything you commit or paste. If it leaks, revoke it in
+Settings, API and make another; the old one stops working at once.
 
 ## Why local
 

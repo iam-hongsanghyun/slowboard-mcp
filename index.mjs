@@ -17,7 +17,7 @@
  *
  * No dependencies: Node 18 or later, for the built-in fetch.
  *
- *   BOARD_API_KEY   your key, from the API page (required)
+ *   BOARD_API_KEY   your key, from the board's Settings, API (required)
  *   BOARD_API_URL   defaults to https://slow-board.vercel.app
  */
 
@@ -34,7 +34,7 @@ class ApiError extends Error {}
 
 async function api(path, query = {}) {
   if (!/^cmk_[0-9a-f]{64}$/i.test(KEY)) {
-    throw new ApiError('BOARD_API_KEY is not set, or is not a key. Make one on the API page and put it in this server\'s env.')
+    throw new ApiError('BOARD_API_KEY is not set, or is not a key. Make one in the board\'s Settings, under API, and put it in this server\'s env.')
   }
   const url = new URL(BASE + path)
   for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v))
