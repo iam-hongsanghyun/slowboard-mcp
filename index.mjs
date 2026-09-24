@@ -25,7 +25,7 @@ import { createInterface } from 'node:readline'
 
 const KEY = process.env.BOARD_API_KEY ?? ''
 const BASE = (process.env.BOARD_API_URL ?? 'https://slow-board.vercel.app').replace(/\/+$/, '')
-const VERSION = '1.3.0'
+const VERSION = '1.2.0'
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 // ── the API ─────────────────────────────────────────────────────────────────
@@ -241,86 +241,6 @@ function conversationsText(r) {
   return list
     .map((c) => `- ${c.id}: ${c.title} -- ${(c.members ?? []).join(', ')}, last ${day(c.last_message_at)}`)
     .join('\n')
-}
-
-// ── the warehouse (0058): raw captures, records, the index ──────────────────
-
-const via = (x) => (x.via_api ? ' via API' : '')
-
-function indexText(ix) {
-  const lines = [`Index of ${ix.board} (${ix.name})`, '']
-  const counts = ix.records?.counts ?? []
-  if (counts.length) {
-    lines.push('Records by type and state: ' + counts.map((c) => `${c.type} ${c.state} ${c.count}`).join('; '), '')
-  }
-  const proposed = ix.records?.proposed ?? []
-  lines.push(`Waiting for review (${proposed.length}) -- a person accepts or rejects these on screen:`)
-  for (const r of proposed) lines.push(`- #${r.number} [${r.type}] ${r.title} -- ${r.author}${via(r)}, ${day(r.updated_at)}`)
-  if (!proposed.length) lines.push('- nothing')
-  const accepted = ix.records?.accepted ?? []
-  lines.push('', `Accepted (${accepted.length}):`)
-  for (const r of accepted) lines.push(`- #${r.number} [${r.type}] ${r.title}`)
-  if (!accepted.length) lines.push('- nothing yet')
-  const caps = ix.captures ?? []
-  lines.push('', `Raw material, newest first (${caps.length}):`)
-  for (const c of caps) lines.push(`- #${c.number} [${c.kind}] ${c.title} -- ${c.author}${via(c)}, ${day(c.created_at)}${c.records ? `, ${c.records} record(s) made from it` : ''}`)
-  if (!caps.length) lines.push('- nothing yet')
-  const dec = ix.decisions ?? []
-  if (dec.length) {
-    lines.push('', 'Decided:')
-    for (const d of dec) lines.push(`- ${oneLine(d.summary, 160)} (#${d.number})`)
-  }
-  const acts = ix.actions ?? []
-  if (acts.length) {
-    lines.push('', 'Still to do:')
-    for (const a of acts) lines.push(`- ${oneLine(a.body, 140)}${a.assignee ? ` -- ${a.assignee}` : ''}${a.due_on ? `, due ${a.due_on}` : ''}${a.state === 'blocked' ? ' (blocked)' : ''}`)
-  }
-  const kw = ix.keywords ?? []
-  if (kw.length) lines.push('', 'Keywords: ' + kw.map((k) => `${k.keyword} (${k.count})`).join(', '))
-  return lines.join('\n')
-}
-
-function capturesText(s) {
-  const list = s.captures ?? []
-  if (!list.length) return `No captures on ${s.board}.`
-  return list
-    .map((c) => `- #${c.number} [${c.kind}] ${c.title} -- ${c.author}${via(c)}, ${day(c.created_at)}, ${c.length} chars${c.records ? `, ${c.records} record(s)` : ''}${c.source ? `, from ${c.source}` : ''}\n  ${oneLine(c.excerpt, 200)}`)
-    .join('\n')
-}
-
-function captureText(c) {
-  const head = [
-    `#${c.number} [${c.kind}] ${c.title}`,
-    `${c.author}${via(c)}, captured ${day(c.created_at)}${c.occurred_at ? `, happened ${day(c.occurred_at)}` : ''}${c.source ? `, from ${c.source}` : ''}`,
-    c.keywords?.length ? `Keywords: ${c.keywords.join(', ')}` : null,
-    (c.records ?? []).length ? `Records made from it: ${c.records.map((r) => `#${r.number} ${r.type} "${r.title}" (${r.state})`).join('; ')}` : 'No records made from it yet.',
-    '',
-  ].filter((x) => x !== null)
-  const tail = c.next_offset ? `\n\n[More: call get_capture again with offset=${c.next_offset}. ${c.length} characters in all.]` : ''
-  return head.join('\n') + c.body + tail
-}
-
-function recordsText(s) {
-  const list = s.records ?? []
-  if (!list.length) return `No records on ${s.board} match.`
-  return list
-    .map((r) => `- #${r.number} [${r.type}] ${r.title} -- ${r.state}, ${r.author}${via(r)}, ${day(r.updated_at)}${r.capture ? `, from capture #${r.capture}` : ''}${r.keywords?.length ? ` {${r.keywords.join(', ')}}` : ''}`)
-    .join('\n')
-}
-
-function recordText(r) {
-  const lines = [
-    `#${r.number} [${r.type}] ${r.title} -- ${r.state}`,
-    `${r.author}${via(r)}, filed ${day(r.created_at)}, changed ${day(r.updated_at)}`,
-  ]
-  if (r.review) lines.push(`Reviewed by ${r.review.by}, ${day(r.review.at)}${r.review.note ? `: ${r.review.note}` : ''}`)
-  if (r.capture) lines.push(`Made from capture #${r.capture.number} "${r.capture.title}"`)
-  if (r.supersedes) lines.push(`Replaces #${r.supersedes}`)
-  if (r.superseded_by) lines.push(`Replaced by #${r.superseded_by}`)
-  if (r.keywords?.length) lines.push(`Keywords: ${r.keywords.join(', ')}`)
-  lines.push('', 'Data:', JSON.stringify(r.data ?? {}, null, 2))
-  if (r.body) lines.push('', 'Body:', r.body)
-  return lines.join('\n')
 }
 
 // ── the tools ───────────────────────────────────────────────────────────────
@@ -734,148 +654,6 @@ const TOOLS = [
       return `Renamed #${number}.`
     },
   },
-  {
-    name: 'board_index',
-    description: 'A board\'s index: records by type and state, proposals waiting for review, accepted records, recent raw material and what came of it, decisions, open actions, keywords. Read this first to get your bearings on a board before capturing or filing.',
-    inputSchema: { type: 'object', properties: { board: str('The board slug.') }, required: ['board'], additionalProperties: false },
-    run: async ({ board }) => indexText(await api(`/api/v1/boards/${encodeURIComponent(board)}/index`)),
-  },
-  {
-    name: 'capture',
-    description: 'Put raw material into a board as it came: a meeting transcript, notes, a document\'s text, a link, a chat excerpt, or your own working note (kind "agent"). Kept as written; records made later point back to it. Answers with its number.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        board: str('The board slug.'),
-        title: str('A short title.'),
-        body: str('The material itself, as it came.'),
-        kind: { type: 'string', enum: ['transcript', 'note', 'document', 'link', 'chat', 'agent'], description: 'What it is, default note.' },
-        source: str('Where it came from: a URL, a file name, "Zoom 22 Sep".'),
-        occurred_at: str('When the thing itself happened, ISO time.'),
-        keywords: { type: 'array', items: { type: 'string' }, description: 'Keywords to file it under.' },
-      },
-      required: ['board', 'title', 'body'],
-      additionalProperties: false,
-    },
-    run: async ({ board, ...rest }) => {
-      const out = await api(`/api/v1/boards/${encodeURIComponent(board)}/captures`, {}, rest)
-      return `Captured as #${out.number} on ${out.board}.`
-    },
-  },
-  {
-    name: 'list_captures',
-    description: 'The raw material on a board, newest first: number, kind, title, how long, how many records came of it, a line of excerpt.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        board: str('The board slug.'),
-        kind: { type: 'string', enum: ['transcript', 'note', 'document', 'link', 'chat', 'agent'], description: 'Only this kind.' },
-        keyword: str('Only what carries this keyword.'),
-        limit: int('How many, default 30, at most 200.'),
-        before: str('A created_at from the last page, for the next.'),
-      },
-      required: ['board'],
-      additionalProperties: false,
-    },
-    run: async ({ board, kind, keyword, limit, before }) =>
-      capturesText(await api(`/api/v1/boards/${encodeURIComponent(board)}/captures`, { kind, keyword, limit, before })),
-  },
-  {
-    name: 'get_capture',
-    description: 'One capture whole, with the records made from it. A long one comes in windows: pass offset to continue.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        board: str('The board slug.'),
-        number: int('The capture\'s number.'),
-        offset: { type: 'integer', minimum: 0, description: 'Where to continue a long one from.' },
-        max_chars: int('Characters per window, default 20000.'),
-      },
-      required: ['board', 'number'],
-      additionalProperties: false,
-    },
-    run: async ({ board, number, offset = 0, max_chars = 20000 }) =>
-      captureText(await api(`/api/v1/boards/${encodeURIComponent(board)}/captures/${number}`, { offset, limit: max_chars })),
-  },
-  {
-    name: 'file_record',
-    description: 'Propose a structured record on a board: a type word (decision, action, summary, policy, entity, edge, ... -- reuse the types board_index lists), a title, JSON data and a Markdown body. Name the capture it was made from, and the accepted record it would replace, if any. It is a proposal: a person accepts or rejects it on screen; you cannot.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        board: str('The board slug.'),
-        type: str('One lower-case word: letters, digits, - or _.'),
-        title: str('A short title.'),
-        data: { type: 'object', description: 'The structured part, a JSON object.' },
-        body: str('The prose part, Markdown.'),
-        keywords: { type: 'array', items: { type: 'string' }, description: 'Keywords to file it under.' },
-        capture: int('The number of the capture it was made from.'),
-        supersedes: int('The number of an accepted record this would replace.'),
-      },
-      required: ['board', 'type', 'title'],
-      additionalProperties: false,
-    },
-    run: async ({ board, ...rest }) => {
-      const out = await api(`/api/v1/boards/${encodeURIComponent(board)}/records`, {}, rest)
-      return `Proposed as #${out.number} on ${out.board}. It waits for a person to accept or reject it.`
-    },
-  },
-  {
-    name: 'list_records',
-    description: 'The records on a board, most recently changed first: number, type, title, state, author, the capture it came from. Filter by type, state (proposed, accepted, rejected, superseded) or keyword.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        board: str('The board slug.'),
-        type: str('Only this type.'),
-        state: { type: 'string', enum: ['proposed', 'accepted', 'rejected', 'superseded'], description: 'Only this state.' },
-        keyword: str('Only what carries this keyword.'),
-        limit: int('How many, default 50, at most 200.'),
-      },
-      required: ['board'],
-      additionalProperties: false,
-    },
-    run: async ({ board, type, state, keyword, limit }) =>
-      recordsText(await api(`/api/v1/boards/${encodeURIComponent(board)}/records`, { type, state, keyword, limit })),
-  },
-  {
-    name: 'get_record',
-    description: 'One record whole: data, body, state, who reviewed it, the capture it came from, what it replaces or was replaced by.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        board: str('The board slug.'),
-        number: int('The record\'s number.'),
-        max_chars: int('Cut the answer at this many characters, default 12000.'),
-        offset: { type: 'integer', minimum: 0, description: 'Where to continue a cut answer from.' },
-      },
-      required: ['board', 'number'],
-      additionalProperties: false,
-    },
-    run: async ({ board, number, max_chars = 12000, offset = 0 }) =>
-      window(recordText(await api(`/api/v1/boards/${encodeURIComponent(board)}/records/${number}`)), offset, max_chars),
-  },
-  {
-    name: 'edit_record',
-    description: 'Revise one of your own proposals before anyone has reviewed it. Give only what changes. An accepted record is not yours to change: propose a new one that supersedes it.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        board: str('The board slug.'),
-        number: int('The record\'s number.'),
-        title: str('A new title.'),
-        data: { type: 'object', description: 'The whole new data object.' },
-        body: str('The whole new body.'),
-        keywords: { type: 'array', items: { type: 'string' }, description: 'The full new keyword list.' },
-      },
-      required: ['board', 'number'],
-      additionalProperties: false,
-    },
-    run: async ({ board, number, ...rest }) => {
-      await api(`/api/v1/boards/${encodeURIComponent(board)}/records/${number}`, {}, rest)
-      return `Revised proposal #${number}.`
-    },
-  },
 ]
 
 // ── the protocol: JSON-RPC 2.0, one message per line on stdin/stdout ────────
@@ -898,7 +676,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item. Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s extracted text). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key; only the owner\'s own words): edit_discussion, edit_reply, edit_message, update_task, rename_surface -- by the [ids] get_item shows. The warehouse, board by board: board_index first; capture puts raw material in as it came (transcripts, notes, documents); file_record proposes structured records made from it (a person accepts or rejects them on screen -- you cannot); list_captures, get_capture, list_records, get_record read them; edit_record revises your own proposal before review. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item. Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s extracted text). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key; only the owner\'s own words): edit_discussion, edit_reply, edit_message, update_task, rename_surface -- by the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return
