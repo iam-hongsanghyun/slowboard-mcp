@@ -25,7 +25,7 @@ import { createInterface } from 'node:readline'
 
 const KEY = process.env.BOARD_API_KEY ?? ''
 const BASE = (process.env.BOARD_API_URL ?? 'https://slow-board.vercel.app').replace(/\/+$/, '')
-const VERSION = '1.2.0'
+const VERSION = '1.3.1'
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 // ── the API ─────────────────────────────────────────────────────────────────
@@ -543,7 +543,7 @@ const TOOLS = [
     },
   },
 
-  // ── editing: the same writing key; only what the owner could edit on screen ──
+  // ── editing: the same writing key, the same rule as on screen (0059) ──
   {
     name: 'edit_discussion',
     description: 'Edit one of the owner\'s own discussions: title, body or keywords (marked edited via API). Other people\'s are refused, even for a curator. Give only what changes; the rest stays. Earlier versions are kept.',
@@ -638,7 +638,7 @@ const TOOLS = [
   },
   {
     name: 'rename_surface',
-    description: 'Rename a canvas or kanban. (Its contents are edited with draw: update, delete, move_card.)',
+    description: 'Rename a canvas or kanban -- any of them: a surface is everyone\'s. (Its contents are edited with draw: update, delete, move_card, on any element; every change is kept in its history.)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -676,7 +676,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item. Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s extracted text). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key; only the owner\'s own words): edit_discussion, edit_reply, edit_message, update_task, rename_surface -- by the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item. Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s extracted text). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task an action point the owner has or raised; a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return
