@@ -146,8 +146,10 @@ function itemText(it) {
     for (const c of it.columns ?? []) {
       parts.push(`## ${c.title || 'Untitled'} [${c.id}] (${c.cards.length})`)
       for (const card of c.cards) {
-        // A card's status, with who set it: the name comes from the log's actor.
-        const status = card.status ? ` {${STATUS_LABEL[card.status] ?? card.status}${card.status_by ? ` -- ${card.status_by}, ${String(card.status_at ?? '').slice(0, 10)}` : ''}}` : ''
+        // A card's progress, one track per person; who set each comes from the log's actor.
+        const status = card.progress?.length
+          ? ` {${card.progress.map((p) => `${p.person}: ${STATUS_LABEL[p.status] ?? p.status}${p.set_by && p.set_by !== p.person ? ` (set by ${p.set_by})` : ''}`).join('; ')}}`
+          : ''
         parts.push(`- [${card.id}] ${oneLine(card.text, 300) || 'Untitled'}${status}${card.keywords?.length ? ` [${card.keywords.join(', ')}]` : ''}`)
       }
       parts.push('')
@@ -527,8 +529,8 @@ const TOOLS = [
       'Draw on a canvas or kanban directly: real shapes, text, arrows, columns and cards that people can then move and edit -- not a picture.',
       'Canvas ops: {op:"shape", ref, text, shape?:"process"|"decision"|"terminator"|"data"|"ellipse"|"document"|"frame", x?, y?, w?:220, h?:110, fill?:"#rrggbb"}, {op:"text", ref, text, x, y, size?:16},',
       '{op:"connect", from, to, text?, dashed?, ends?:"arrow"|"none"|"double", route?:"elbow"|"straight"}, {op:"update", id, text?, x?, y?, w?, h?, fill?}, {op:"delete", id}, {op:"tag", id, keywords}.',
-      'Kanban ops: {op:"column", ref, title}, {op:"card", ref, column (id, ref or title), text, keywords?}, {op:"move_card", card, column, index?}, {op:"update", id, text?, status?}, {op:"delete", id}.',
-      'A card\'s status is one of preparing, in_progress, blocked, done, verified, or null to clear it; anyone may set it, and the board records who did. get_item shows it in braces.',
+      'Kanban ops: {op:"column", ref, title}, {op:"card", ref, column (id, ref or title), text, keywords?}, {op:"move_card", card, column, index?}, {op:"update", id, text?, status?, for?}, {op:"delete", id}.',
+      'A card carries progress one person at a time: {op:"update", id, status} sets your own track, and adding for:"Name" sets anyone\'s; status is one of preparing, in_progress, blocked, done, verified, or null to take that person off the card. Anyone may set any track, and the board records who did. get_item shows the tracks in braces.',
       'from/to/id/column take an element id from get_item or a ref made earlier in the same call. Shapes without x,y are laid out left to right by their arrows, beside what is already there.',
       'Changing the text of, or deleting, an element someone else made is refused; moving, resizing, tagging and moving cards are allowed.',
       'Coordinates are world units, x right, y down; boxes are about 220x110, so space them ~300 apart. Read the surface with get_item first to see what is there.',

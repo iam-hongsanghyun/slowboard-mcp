@@ -29,7 +29,7 @@ so a tool call costs exactly one API call -- and a key may make 120 a minute.
 | `reply` | Reply to a discussion |
 | `send_message` | Write a line in a board conversation or one of your direct conversations |
 | `add_task` | Add an action point -- who, what, by when -- to anything by its number |
-| `draw` | Draw on a canvas or kanban: real shapes, text, arrows, columns and cards, not a picture -- and move, change or remove what is there. On a kanban it also sets a card's status (Preparing, In progress, Blocked, Done, Verified), which `get_item` shows with who set it |
+| `draw` | Draw on a canvas or kanban: real shapes, text, arrows, columns and cards, not a picture -- and move, change or remove what is there. On a kanban it also sets a card's progress, one person at a time -- yours, or anyone's with `for` -- at Preparing, In progress, Blocked, Done or Verified; `get_item` shows each person's with who set it |
 | `edit_discussion` | Change a discussion's title, body or keywords |
 | `edit_reply` | Change one of your replies |
 | `edit_message` | Change one of your lines, on a board or in a direct conversation |
