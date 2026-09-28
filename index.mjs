@@ -110,6 +110,8 @@ function actionsText(actions) {
   return ['', 'Action points:', ...actions.map((a) => `- [${a.id}] [${a.state}] ${a.body}${a.assignee ? ` -- ${a.assignee}` : ''}${a.due_on ? `, by ${a.due_on}` : ''}${a.blocked_reason ? ` (blocked: ${a.blocked_reason})` : ''}`)]
 }
 
+const STATUS_LABEL = { preparing: 'Preparing', in_progress: 'In progress', blocked: 'Blocked', done: 'Done', verified: 'Verified' }
+
 function itemText(it) {
   if (it.merged_into) return `#${it.number} was merged into #${it.merged_into}. Fetch that one instead.`
   const head = [`#${it.number} ${it.kind}: ${it.title}`]
@@ -143,7 +145,11 @@ function itemText(it) {
     // Ids in brackets, so draw can move, rename or remove what is already there.
     for (const c of it.columns ?? []) {
       parts.push(`## ${c.title || 'Untitled'} [${c.id}] (${c.cards.length})`)
-      for (const card of c.cards) parts.push(`- [${card.id}] ${oneLine(card.text, 300) || 'Untitled'}${card.keywords?.length ? ` [${card.keywords.join(', ')}]` : ''}`)
+      for (const card of c.cards) {
+        // A card's status, with who set it: the name comes from the log's actor.
+        const status = card.status ? ` {${STATUS_LABEL[card.status] ?? card.status}${card.status_by ? ` -- ${card.status_by}, ${String(card.status_at ?? '').slice(0, 10)}` : ''}}` : ''
+        parts.push(`- [${card.id}] ${oneLine(card.text, 300) || 'Untitled'}${status}${card.keywords?.length ? ` [${card.keywords.join(', ')}]` : ''}`)
+      }
       parts.push('')
     }
     parts.push(...actionsText(it.actions))
@@ -521,7 +527,8 @@ const TOOLS = [
       'Draw on a canvas or kanban directly: real shapes, text, arrows, columns and cards that people can then move and edit -- not a picture.',
       'Canvas ops: {op:"shape", ref, text, shape?:"process"|"decision"|"terminator"|"data"|"ellipse"|"document"|"frame", x?, y?, w?:220, h?:110, fill?:"#rrggbb"}, {op:"text", ref, text, x, y, size?:16},',
       '{op:"connect", from, to, text?, dashed?, ends?:"arrow"|"none"|"double", route?:"elbow"|"straight"}, {op:"update", id, text?, x?, y?, w?, h?, fill?}, {op:"delete", id}, {op:"tag", id, keywords}.',
-      'Kanban ops: {op:"column", ref, title}, {op:"card", ref, column (id, ref or title), text, keywords?}, {op:"move_card", card, column, index?}, {op:"update", id, text}, {op:"delete", id}.',
+      'Kanban ops: {op:"column", ref, title}, {op:"card", ref, column (id, ref or title), text, keywords?}, {op:"move_card", card, column, index?}, {op:"update", id, text?, status?}, {op:"delete", id}.',
+      'A card\'s status is one of preparing, in_progress, blocked, done, verified, or null to clear it; anyone may set it, and the board records who did. get_item shows it in braces.',
       'from/to/id/column take an element id from get_item or a ref made earlier in the same call. Shapes without x,y are laid out left to right by their arrows, beside what is already there.',
       'Changing the text of, or deleting, an element someone else made is refused; moving, resizing, tagging and moving cards are allowed.',
       'Coordinates are world units, x right, y down; boxes are about 220x110, so space them ~300 apart. Read the surface with get_item first to see what is there.',
