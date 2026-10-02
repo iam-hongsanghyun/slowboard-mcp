@@ -25,7 +25,7 @@ import { createInterface } from 'node:readline'
 
 const KEY = process.env.BOARD_API_KEY ?? ''
 const BASE = (process.env.BOARD_API_URL ?? 'https://slow-board.vercel.app').replace(/\/+$/, '')
-const VERSION = '1.3.2'
+const VERSION = '1.4.0'
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 // ── the API ─────────────────────────────────────────────────────────────────
@@ -299,6 +299,29 @@ const TOOLS = [
     },
     run: async ({ board, number, max_chars = 12000, offset = 0, before, limit = 150 }) =>
       window(itemText(await api(`/api/v1/boards/${encodeURIComponent(board)}/items/${number}`, { before, limit })), offset, max_chars),
+  },
+  {
+    name: 'open_ref',
+    description:
+      'One thing by its short address, as people paste it -- "questions#2", or "#2" with board -- whole, the same as get_item. A discussion that has moved since keeps its address and is followed to where it lives now. Use this for any board#number you meet in a post, a line, a card or a shape.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: str('The short address: board#number, or #number with board.'),
+        board: str('The board a bare #number belongs to.'),
+        max_chars: int('Cut the answer at this many characters, default 12000.'),
+        offset: { type: 'integer', minimum: 0, description: 'Where to continue a cut answer from.' },
+      },
+      required: ['ref'],
+      additionalProperties: false,
+    },
+    run: async ({ ref, board, max_chars = 12000, offset = 0 }) => {
+      const m = /^\s*([a-z0-9][a-z0-9-]*)?#(\d+)\s*$/.exec(String(ref))
+      if (!m) throw new ApiError('A short address looks like questions#2, or #2 with board.')
+      const where = m[1] ?? board
+      if (!where) throw new ApiError(`"${ref}" names no board: pass board, or write it as board#number.`)
+      return window(itemText(await api(`/api/v1/boards/${encodeURIComponent(where)}/items/${m[2]}`)), offset, max_chars)
+    },
   },
   {
     name: 'list_conversations',
@@ -685,7 +708,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item. Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s extracted text). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s extracted text). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return
