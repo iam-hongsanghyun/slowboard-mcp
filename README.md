@@ -18,12 +18,15 @@ so a tool call costs exactly one API call -- and a key may make 120 a minute.
 | `list_conversations` | Your direct conversations |
 | `get_conversation` | One of them, line by line |
 | `search` | Words anywhere -- discussions, replies, canvases and kanbans, conversations, lines, and the words inside files -- with where each hit is and the text around it. Korean works |
+| `catch_up` | What moved since this key last read, oldest first. The board remembers where the key read to, so each call hands over only what is newer -- start a session with it. `peek` reads without moving the mark |
+| `set_read_mark` | Put the read mark at a moment: back to read again, or now to skip |
+| `brief` | Everything on one subject in one read: an address (`surfaces#41`) gives that thing with what refers to it and what shares its keywords; words give the discussions most about them with their latest replies, decisions and open actions, and every decision, action, surface and file that mentions them |
 | `recent` | What moved since a time, across every board and your direct conversations |
 | `list_actions` | Action points across boards, with where each lives. By default only what is still to do |
 | `list_decisions` | The decision log, with the discussion each decision was filed against |
 | `list_keywords` | Every keyword, with how many things carry it |
 | `get_keyword` | Everything filed under one keyword |
-| `read_file` | A file's details and the text extracted from inside it, in windows |
+| `read_file` | A file's details and the words inside it, in windows -- a spreadsheet as tables, `.hwp`/`.hwpx` included. An image comes as a picture Claude can see; `look` hands over any file itself, up to 8 MB |
 | `create_discussion` | Start a discussion on a board you choose, with a title and a Markdown body |
 | `create_surface` | Make a canvas or kanban on a board, named as you say |
 | `reply` | Reply to a discussion |
@@ -35,14 +38,17 @@ so a tool call costs exactly one API call -- and a key may make 120 a minute.
 | `edit_message` | Change one of your lines, on a board or in a direct conversation |
 | `update_task` | Change an action point: open, blocked (with the reason), done or dropped; what it says; who has it; by when |
 | `rename_surface` | Rename a canvas or kanban |
+| `my_changes` | Everything this key wrote since a time: surfaces drawn on, action points changed or raised, posts and lines |
+| `revert` | Take this key's changes back -- on every surface and action point, or one surface -- or put one canvas or kanban back as it stood at a moment. Says what it would do first; changes nothing without `apply` |
 
 Everything from `create_discussion` down writes, as you, and needs a key made with
-**Allow writing**. Everything written is marked via API on the board, and an edit
-is marked edited via API. The edit tools change only your own words: your
-discussions, replies and lines, action points you have or raised, surfaces you
-made -- even if you are a curator who could edit more on screen. On a canvas or
-kanban, `draw` moves, resizes and tags anything, but rewrites or removes only
-what you drew.
+**Allow writing** (`my_changes` only reads; `revert` reads until `apply`).
+Everything written is marked via API on the board, and an edit is marked edited
+via API. The rule is the screen's: a discussion, reply or line is its author's,
+so the edit tools change only yours; an action point is shared work, and a canvas
+or kanban is everyone's, so `update_task`, `rename_surface` and `draw` change any
+of them -- every change is kept, and `revert` takes a key's changes back without
+touching anyone else's later work.
 `get_item` shows the id of every reply, line and action point in brackets, which
 is what the edit tools take.
 

@@ -25,7 +25,7 @@ import { createInterface } from 'node:readline'
 
 const KEY = process.env.BOARD_API_KEY ?? ''
 const BASE = (process.env.BOARD_API_URL ?? 'https://slow-board.vercel.app').replace(/\/+$/, '')
-const VERSION = '1.4.0'
+const VERSION = '1.5.0'
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 // ── the API ─────────────────────────────────────────────────────────────────
@@ -235,12 +235,90 @@ function fileText(f, offset) {
   if (f.place) lines.push(`On ${f.place.kind} ${whereOf(f.place)}: ${f.place.title}`)
   if (f.keywords?.length) lines.push(`Keywords: ${f.keywords.join(', ')}`)
   lines.push(`Open in the app (signed in): ${f.url}`, '')
-  if (!f.text_length) lines.push('No text was extracted from this file (an image, or a format the board does not read).')
+  if (!f.text_length) lines.push(String(f.mime).startsWith('image/') ? 'An image: no words inside.' : 'No text could be read from this file (a scanned PDF, or a format the board does not read).')
   else {
     lines.push(`Text (${offset}-${offset + (f.text?.length ?? 0)} of ${f.text_length} characters):`, '', f.text ?? '')
     if (f.next_offset != null) lines.push('', `[More: call read_file again with offset=${f.next_offset}.]`)
   }
   return lines.join('\n')
+}
+
+function catchUpText(r) {
+  const items = r.items ?? []
+  const since = String(r.since).slice(0, 16).replace('T', ' ')
+  if (!items.length) return `Nothing new since ${since}.${r.moved_mark ? '' : ' (The read mark did not move.)'}`
+  const lines = [`Since ${since}, oldest first: ${items.length} ${items.length === 1 ? 'thing' : 'things'} moved.`, '']
+  for (const i of items) {
+    lines.push(`- ${i.new ? 'new ' : ''}${i.kind} ${whereOf(i)}: ${i.title} -- ${i.by ?? 'someone'}, ${String(i.updated_at).slice(0, 16).replace('T', ' ')}`)
+    if (i.excerpt) lines.push(`    ${oneLine(i.excerpt, 140)}`)
+  }
+  lines.push('', r.moved_mark
+    ? `Read mark moved to ${String(r.read_to).slice(0, 19).replace('T', ' ')}.${r.more ? ' More is waiting: call catch_up again.' : ''}`
+    : `Read mark not moved (a peek, or narrowed to one board).${r.more ? ' More is waiting.' : ''}`)
+  return lines.join('\n')
+}
+
+function changesText(r) {
+  const out = [`What this key wrote since ${String(r.since).slice(0, 16).replace('T', ' ')}:`]
+  const section = (title, list, line) => { if (list?.length) out.push('', `${title}:`, ...list.map(line)) }
+  section('Surfaces drawn on', r.surfaces, (s) => `- ${s.kind} ${whereOf(s)}: ${s.title} -- ${s.changes} changes, ${String(s.first_at).slice(0, 16).replace('T', ' ')} to ${String(s.last_at).slice(11, 16)}`)
+  section('Action points changed', r.actions_changed, (a) => `- [${a.id}] [${a.state}] ${a.body} -- ${a.changes} changes${a.place ? `, on ${whereOf(a.place)}` : ''}`)
+  section('Action points raised', r.actions_raised, (a) => `- [${a.id}] [${a.state}] ${a.body}${a.place ? `, on ${whereOf(a.place)}` : ''}`)
+  section('Discussions started', r.discussions, (d) => `- ${whereOf(d)}: ${d.title}`)
+  section('Replies', r.replies, (d) => `- [${d.id}] on ${whereOf(d)}: ${oneLine(d.excerpt, 100)}`)
+  section('Lines', r.lines, (m) => `- [${m.id}] in ${whereOf(m)}: ${oneLine(m.excerpt, 100)}`)
+  if (out.length === 1) out.push('Nothing.')
+  return out.join('\n')
+}
+
+function revertText(r) {
+  const out = [r.applied ? 'Taken back:' : 'Would take back (nothing changed yet -- call again with apply: true):']
+  for (const s of r.surfaces ?? []) {
+    out.push(`- ${s.kind} ${whereOf(s)}: ${s.title} -- ${s.undone} ${s.undone === 1 ? 'change' : 'changes'}${s.appended ? `, ${s.appended} events appended` : ''}`)
+    for (const k of s.skipped ?? []) out.push(`    left alone: ${k}`)
+  }
+  const a = r.actions
+  if (a) {
+    for (const x of a.restored ?? []) out.push(`- action [${x.id}] put back to: [${x.state}] ${x.body}`)
+    for (const x of a.dropped ?? []) out.push(`- action [${x.id}] dropped (this key raised it): ${x.body}`)
+    for (const x of a.skipped ?? []) out.push(`- action [${x.id}] left alone (${x.why}): ${x.body}`)
+  }
+  if (out.length === 1) out.push('Nothing to take back.')
+  if ((r.surfaces ?? []).some((s) => s.skipped?.length) || a?.skipped?.length) out.push('', 'Left-alone items were changed by someone else since; force: true takes them back anyway.')
+  return out.join('\n')
+}
+
+function briefText(r) {
+  const out = [`Brief: ${r.subject}`]
+  const thing = (t, indent = '') => {
+    const lines = [`${indent}${t.kind} ${whereOf(t)}: ${t.title}${t.keywords?.length ? ` [${t.keywords.join(', ')}]` : ''}${t.by ? ` -- ${t.by}, ${day(t.created_at)}` : ''}`]
+    if (t.body) lines.push('', t.body)
+    if (t.latest_replies?.length) {
+      lines.push('', `Latest replies (${t.latest_replies.length} of ${t.replies_total}):`)
+      for (const x of t.latest_replies) lines.push(`- ${x.by ?? 'someone'}, ${day(x.at)}${x.title ? ` -- ${x.title}` : ''}: ${x.body ?? ''}`)
+    }
+    if (t.decisions?.length) lines.push('', 'Decided:', ...t.decisions.map((d) => `- ${d.summary} -- ${d.by}, ${day(d.at)}`))
+    if (t.open_actions?.length) lines.push('', 'Still to do:', ...t.open_actions.map((a) => `- [${a.state}] ${a.body}${a.assignee ? ` -- ${a.assignee}` : ''}${a.due_on ? `, by ${a.due_on}` : ''}`))
+    if (t.files?.length) lines.push('', `Files: ${t.files.map((f) => `${f.name} [${f.id}]`).join(', ')}`)
+    if (t.columns) for (const c of t.columns) lines.push(`- ${c.title}: ${c.cards.join(' | ') || '(empty)'}`)
+    if (t.text?.length) lines.push(`Text on it (${t.elements} elements): ${t.text.join(' | ')}`)
+    if (t.latest_lines?.length) lines.push(...t.latest_lines.map((m) => `- ${m.by ?? 'someone'}, ${day(m.at)}: ${m.body}`))
+    return lines.join('\n')
+  }
+  if (r.item) {
+    out.push('', thing(r.item))
+    if (r.referred_to_by?.length) out.push('', 'Referred to by:', ...r.referred_to_by.map((x) => `- ${x.kind} ${whereOf(x)}: ${x.title ?? ''} -- ${oneLine(x.snippet, 160)}`))
+    for (const k of r.same_keywords ?? []) if (k.items?.length) out.push('', `Also under "${k.keyword}":`, ...k.items.map((i) => `- ${i.kind} ${i.kind === 'file' ? `[${i.id}]` : whereOf(i)}: ${i.title}`))
+    return out.join('\n')
+  }
+  if (r.keyword) out.push('', `Filed under "${r.keyword.keyword}":`, ...r.keyword.items.map((i) => `- ${i.kind} ${i.kind === 'file' ? `[${i.id}]` : whereOf(i)}: ${i.title}`))
+  if (r.discussions?.length) for (const d of r.discussions) out.push('', '---', thing(d))
+  if (r.more_discussions?.length) out.push('', `More discussions on it: ${r.more_discussions.map((t) => `${t.board}#${t.number}`).join(', ')}`)
+  if (r.decisions?.length) out.push('', 'Decisions mentioning it:', ...r.decisions.map((d) => `- ${d.summary} -- ${d.by}, ${day(d.decided_at)}, on ${whereOf(d.discussion)}`))
+  if (r.open_actions?.length) out.push('', 'Open actions mentioning it:', ...r.open_actions.map((a) => `- [${a.id}] [${a.state}] ${a.body}${a.assignee ? ` -- ${a.assignee}` : ''}${a.place ? `, on ${whereOf(a.place)}` : ''}`))
+  if (r.elsewhere?.length) out.push('', 'Elsewhere:', ...r.elsewhere.map((h) => `- ${h.kind}${h.id ? ` [${h.id}]` : ''} in ${whereOf(h)}: ${h.title ?? ''} -- ${oneLine(h.snippet, 160)}`))
+  if (out.length === 1) out.push('', 'Nothing on the board mentions it.')
+  return out.join('\n')
 }
 
 function conversationsText(r) {
@@ -438,11 +516,69 @@ const TOOLS = [
         id: str('The file id.'),
         offset: { type: 'integer', minimum: 0, description: 'Where to continue from, in characters.' },
         max_chars: int('How much text, default 12000.'),
+        look: { type: 'boolean', description: 'Also hand over the file itself (up to 8 MB), e.g. a scanned PDF. Images come as pictures anyway.' },
       },
       required: ['id'],
       additionalProperties: false,
     },
-    run: async ({ id, offset = 0, max_chars = 12000 }) => fileText(await api(`/api/v1/files/${encodeURIComponent(id)}`, { offset, limit: max_chars }), offset),
+    run: async ({ id, offset = 0, max_chars = 12000, look = false }) => {
+      const f = await api(`/api/v1/files/${encodeURIComponent(id)}`, { offset, limit: max_chars })
+      const text = fileText(f, offset)
+      // An image is handed over as a picture, so the model sees it; so is any
+      // file asked for with look, up to the size the API serves.
+      const image = String(f.mime).startsWith('image/') && /^image\/(png|jpeg|gif|webp)$/.test(f.mime)
+      if (!f.content || !(image || look)) return text
+      try {
+        const c = await api(`/api/v1/files/${encodeURIComponent(id)}/content`)
+        if (image) return { content: [{ type: 'text', text }, { type: 'image', data: c.base64, mimeType: c.mime }] }
+        return { content: [{ type: 'text', text }, { type: 'resource', resource: { uri: f.content, mimeType: c.mime, blob: c.base64 } }] }
+      } catch (e) {
+        return `${text}\n\n[The file itself could not be fetched: ${e.message}]`
+      }
+    },
+  },
+  {
+    name: 'catch_up',
+    description: 'What moved since this key last read, oldest first -- discussions, canvases, kanbans and conversations. The board remembers where the key read to: each call moves the mark to the last thing it hands over, so the next call gives only what is newer (or the next page). Start a session with this instead of recent. peek reads without moving the mark.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        board: str('Only this board (slug). A narrowed call never moves the mark.'),
+        limit: int('How many, default 50, at most 200.'),
+        peek: { type: 'boolean', description: 'Read without moving the mark.' },
+      },
+      additionalProperties: false,
+    },
+    run: async ({ board, limit, peek }) => catchUpText(await api('/api/v1/catch-up', { board, limit, peek: peek ? 1 : undefined })),
+  },
+  {
+    name: 'set_read_mark',
+    description: 'Put this key\'s read mark at a moment: back, to read again from there; left out, at now, to skip everything before.',
+    inputSchema: { type: 'object', properties: { read_to: str('An ISO date or time. Default: now.') }, additionalProperties: false },
+    run: async ({ read_to }) => {
+      const r = await api('/api/v1/catch-up', {}, read_to ? { read_to } : {})
+      return `Read mark set to ${String(r.read_to).slice(0, 19).replace('T', ' ')}.`
+    },
+  },
+  {
+    name: 'brief',
+    description: 'Everything the board holds about one subject, condensed to read in one go. Give an address (surfaces#41) for that thing with what refers to it and what shares its keywords; or words for the discussions most about them (with latest replies, decisions and open actions), the decisions and open actions that mention them anywhere, and the matching surfaces, conversations and files. Use it to explain a topic or to pick up work on it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        q: str('An address like surfaces#41, or the subject in words (Korean works).'),
+        board: str('Only this board, or the board of a bare #41.'),
+      },
+      required: ['q'],
+      additionalProperties: false,
+    },
+    run: async ({ q, board }) => briefText(await api('/api/v1/brief', { q, board })),
+  },
+  {
+    name: 'my_changes',
+    description: 'Everything this key wrote since a time (default a day ago): the canvases and kanbans it drew on and how much, the action points it changed or raised, the discussions, replies and lines it posted. Check it before revert, or to report what you did.',
+    inputSchema: { type: 'object', properties: { since: str('An ISO date or time. Default: a day ago.') }, additionalProperties: false },
+    run: async ({ since }) => changesText(await api('/api/v1/changes', { since })),
   },
 
   // ── writing: needs a key made with "Allow writing" ─────────────────────────
@@ -686,6 +822,23 @@ const TOOLS = [
       return `Renamed #${number}.`
     },
   },
+  {
+    name: 'revert',
+    description: 'Take changes back, safely. With since: everything this key changed after that time -- every canvas and kanban it drew on (the inverse is appended, as undo does; nothing leaves the history) and every action point it changed (put back) or raised (dropped). With since plus board and number: only on that surface. With at plus board and number: that canvas or kanban put back as it stood at that moment, whoever changed it since. Answers with what it would do and changes nothing unless apply is true -- look first. Anything someone else changed since is left alone and reported unless force. Posts and lines are not touched: they are their author\'s (see my_changes).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        since: str('Take back this key\'s changes after this ISO time.'),
+        at: str('Put one surface back as it stood at this ISO time (needs board and number).'),
+        board: str('The board slug of one surface.'),
+        number: int('The canvas or kanban number.'),
+        apply: { type: 'boolean', description: 'Actually do it. Without it, only says what would happen.' },
+        force: { type: 'boolean', description: 'Take back even what someone else has changed since.' },
+      },
+      additionalProperties: false,
+    },
+    run: async (args) => revertText(await api('/api/v1/revert', {}, args)),
+  },
 ]
 
 // ── the protocol: JSON-RPC 2.0, one message per line on stdin/stdout ────────
@@ -708,7 +861,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Access to the board app, as the key\'s owner. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s extracted text). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner. Start a session with catch_up: the board remembers where this key read to and hands over only what is newer. To explain or pick up a subject, brief (an address or words) gives everything on it in one call. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s words -- spreadsheets as tables, Hangul documents included -- and an image as a picture). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. Safety: my_changes lists what this key wrote; revert takes it back (look first, then apply: true), or puts one surface back as it stood at a moment. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return
@@ -727,8 +880,9 @@ async function handle(msg) {
           return
         }
         try {
-          const text = await tool.run(params?.arguments ?? {})
-          send({ id, result: { content: [{ type: 'text', text }] } })
+          // A tool answers in text, or with its own content -- an image, a file.
+          const out = await tool.run(params?.arguments ?? {})
+          send({ id, result: typeof out === 'string' ? { content: [{ type: 'text', text: out }] } : out })
         } catch (e) {
           // A refusal the model can read and act on, not a protocol error.
           const text = e instanceof ApiError ? e.message : `The request failed: ${e?.message ?? e}`
