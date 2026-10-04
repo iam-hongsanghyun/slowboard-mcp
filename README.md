@@ -32,12 +32,21 @@ so a tool call costs exactly one API call -- and a key may make 120 a minute.
 | `reply` | Reply to a discussion |
 | `send_message` | Write a line in a board conversation or one of your direct conversations |
 | `add_task` | Add an action point -- who, what, by when -- to anything by its number |
-| `draw` | Draw on a canvas or kanban: real shapes, text, arrows, columns and cards, not a picture -- and move, change or remove what is there. On a kanban it also sets your own progress on a card -- Preparing, In progress, Blocked, Done or Verified; each person sets only their own, and `get_item` shows everyone's |
+| `draw` | Draw on a canvas or kanban: real shapes, text, arrows, columns and cards, not a picture -- and move, change or remove what is there, reorder kanban columns, and link any element to a web address or another thing on the board. On a kanban it also sets your own progress on a card -- Preparing, In progress, Blocked, Done or Verified; each person sets only their own, and `get_item` shows everyone's |
 | `edit_discussion` | Change a discussion's title, body or keywords |
 | `edit_reply` | Change one of your replies |
 | `edit_message` | Change one of your lines, on a board or in a direct conversation |
 | `update_task` | Change an action point: open, blocked (with the reason), done or dropped; what it says; who has it; by when |
 | `rename_surface` | Rename a canvas or kanban |
+| `manage_discussion` | Bin, restore, pin, unpin, or move a discussion to another board (it keeps its permanent address) |
+| `decide` | Record a decision on a discussion, or withdraw one you recorded |
+| `withdraw` | Withdraw your own reply or line, or restore a withdrawn reply |
+| `set_keywords` | Set the keywords on a discussion, canvas, kanban, conversation or file |
+| `manage_surface` | Bin or restore a canvas or kanban |
+| `manage_conversation` | Start a board or direct conversation, rename or archive one, add or remove someone |
+| `attach_file` | Attach a file from this computer (up to 3 MB) to a discussion or reply |
+| `link_file` | Show a file already in the archive on a discussion or reply |
+| `list_bin` | What is binned on a board, to restore |
 | `my_changes` | Everything this key wrote since a time: surfaces drawn on, action points changed or raised, posts and lines |
 | `revert` | Take this key's changes back -- on every surface and action point, or one surface -- or put one canvas or kanban back as it stood at a moment. Says what it would do first; changes nothing without `apply` |
 
@@ -109,3 +118,6 @@ An MCP server hosted on a serverless platform over SSE keeps a function open for
 long as the client stays connected, and that open time is billed whether or not
 anything is asked. This server is not hosted anywhere: it lives as long as your
 Claude session, on your machine, and reaches the board only when a tool is called.
+
+Running the organisation -- members, roles, invites, teams, boards, API keys,
+deleting for good -- is deliberately not here: those stay a signed-in person's.

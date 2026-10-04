@@ -25,7 +25,7 @@ import { createInterface } from 'node:readline'
 
 const KEY = process.env.BOARD_API_KEY ?? ''
 const BASE = (process.env.BOARD_API_URL ?? 'https://slow-board.vercel.app').replace(/\/+$/, '')
-const VERSION = '1.5.0'
+const VERSION = '1.6.0'
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 // ── the API ─────────────────────────────────────────────────────────────────
@@ -332,6 +332,14 @@ function conversationsText(r) {
 // ── the tools ───────────────────────────────────────────────────────────────
 
 const str = (description) => ({ type: 'string', description })
+const MIME = {
+  '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',
+  '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv', '.json': 'application/json', '.yaml': 'text/yaml', '.yml': 'text/yaml', '.html': 'text/html',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.hwp': 'application/x-hwp', '.hwpx': 'application/hwp+zip',
+}
 const int = (description) => ({ type: 'integer', minimum: 1, description })
 
 const TOOLS = [
@@ -687,11 +695,11 @@ const TOOLS = [
     description: [
       'Draw on a canvas or kanban directly: real shapes, text, arrows, columns and cards that people can then move and edit -- not a picture.',
       'Canvas ops: {op:"shape", ref, text, shape?:"process"|"decision"|"terminator"|"data"|"ellipse"|"document"|"frame", x?, y?, w?:220, h?:110, fill?:"#rrggbb"}, {op:"text", ref, text, x, y, size?:16},',
-      '{op:"connect", from, to, text?, dashed?, ends?:"arrow"|"none"|"double", route?:"elbow"|"straight"}, {op:"update", id, text?, x?, y?, w?, h?, fill?}, {op:"delete", id}, {op:"tag", id, keywords}.',
-      'Kanban ops: {op:"column", ref, title}, {op:"card", ref, column (id, ref or title), text, keywords?}, {op:"move_card", card, column, index?}, {op:"update", id, text?, status?}, {op:"delete", id}.',
+      '{op:"connect", from, to, text?, dashed?, ends?:"arrow"|"none"|"double", route?:"elbow"|"straight"}, {op:"update", id, text?, x?, y?, w?, h?, fill?}, {op:"delete", id}, {op:"tag", id, keywords}, {op:"untag", id, keywords}, {op:"link", id, href} (a web address or a board address like technical-guideline#2; null removes it).',
+      'Kanban ops: {op:"column", ref, title}, {op:"card", ref, column (id, ref or title), text, keywords?}, {op:"move_card", card, column, index?}, {op:"move_column", column, index} (0 = first), {op:"update", id, text?, status?} (a column\'s text is its title), {op:"delete", id}, and tag, untag, link as on a canvas.',
       'A card carries progress one person at a time, each person\'s own: {op:"update", id, status} sets yours -- preparing, in_progress, blocked, done, verified, or null to take yourself off the card. Nobody sets anyone else\'s. get_item shows everyone\'s in braces.',
       'from/to/id/column take an element id from get_item or a ref made earlier in the same call. Shapes without x,y are laid out left to right by their arrows, beside what is already there.',
-      'Changing the text of, or deleting, an element someone else made is refused; moving, resizing, tagging and moving cards are allowed.',
+      'A surface is everyone\'s: any element may be changed or removed, and every change is kept (revert takes a key\'s changes back).',
       'Coordinates are world units, x right, y down; boxes are about 220x110, so space them ~300 apart. Read the surface with get_item first to see what is there.',
     ].join(' '),
     inputSchema: {
@@ -822,6 +830,179 @@ const TOOLS = [
       return `Renamed #${number}.`
     },
   },
+  // ── everything else a member does (0067): one call each, the screen's rules ──
+  {
+    name: 'manage_discussion',
+    description: 'Bin, restore, pin, unpin or move a discussion to another board. Binning and moving follow the screen\'s rules (who may is the discussion\'s author, or an admin). A moved discussion keeps its permanent address. list_bin shows what can be restored.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['bin', 'restore', 'pin', 'unpin', 'move'] },
+        board: str('The board slug.'),
+        number: int('The discussion number.'),
+        to: str('For move: the board to move it to (slug).'),
+      },
+      required: ['action', 'board', 'number'],
+      additionalProperties: false,
+    },
+    run: async ({ action, board, number, to }) => {
+      const map = { bin: 'bin_discussion', restore: 'restore_discussion', pin: 'pin', unpin: 'unpin', move: 'move_discussion' }
+      const r = await api('/api/v1/act', {}, { action: map[action], board, number, to })
+      return `Discussion ${r.done ?? action}: ${r.board} #${r.number}${r.address ? ` (permanent address ${r.address})` : ''}.`
+    },
+  },
+  {
+    name: 'decide',
+    description: 'Record a decision on a discussion -- one sentence of what was decided, recorded as the key\'s owner and marked via API -- or withdraw one the owner recorded. Decisions appear in list_decisions and on the discussion.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['record', 'withdraw'] },
+        board: str('For record: the board slug.'),
+        number: int('For record: the discussion number.'),
+        summary: str('For record: what was decided, in one sentence.'),
+        reply_id: str('For record: the reply it came from, if any.'),
+        decision_id: str('For withdraw: the decision id from list_decisions.'),
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    run: async ({ action, board, number, summary, reply_id, decision_id }) => {
+      const r = action === 'record'
+        ? await api('/api/v1/act', {}, { action: 'record_decision', board, number, summary, reply_id })
+        : await api('/api/v1/act', {}, { action: 'withdraw_decision', decision_id })
+      return action === 'record' ? `Decision recorded [${r.id}] on ${r.board} #${r.number}.` : 'Decision withdrawn.'
+    },
+  },
+  {
+    name: 'withdraw',
+    description: 'Withdraw one of the owner\'s own replies or lines (it shows as withdrawn; nothing is purged), or restore a withdrawn reply. Someone else\'s is refused. By the [id] get_item or get_conversation shows.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        what: { type: 'string', enum: ['reply', 'line', 'restore_reply'] },
+        id: str('The reply or line id.'),
+        reason: str('For a reply: why, shown with it. Optional.'),
+      },
+      required: ['what', 'id'],
+      additionalProperties: false,
+    },
+    run: async ({ what, id, reason }) => {
+      const body = what === 'line' ? { action: 'withdraw_line', message_id: id } : what === 'reply' ? { action: 'withdraw_reply', reply_id: id, reason } : { action: 'restore_reply', reply_id: id }
+      await api('/api/v1/act', {}, body)
+      return what === 'restore_reply' ? 'Reply restored.' : `${what === 'line' ? 'Line' : 'Reply'} withdrawn.`
+    },
+  },
+  {
+    name: 'set_keywords',
+    description: 'Set the keywords on a discussion, canvas, kanban, conversation or file -- the whole list, replacing what was there (an empty list clears them). Keywords are how things are filed across boards (list_keywords, get_keyword).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['discussion', 'canvas', 'kanban', 'conversation', 'file'] },
+        board: str('The board slug (not for a file or a direct conversation).'),
+        number: int('The number on the board.'),
+        conversation_id: str('For a direct conversation.'),
+        file_id: str('For a file.'),
+        keywords: { type: 'array', items: { type: 'string' }, description: 'At most 20.' },
+      },
+      required: ['kind', 'keywords'],
+      additionalProperties: false,
+    },
+    run: async (args) => {
+      const r = await api('/api/v1/act', {}, { action: 'set_keywords', ...args })
+      return `Keywords now: ${(r.keywords ?? []).join(', ') || '(none)'}.`
+    },
+  },
+  {
+    name: 'manage_surface',
+    description: 'Bin or restore a canvas or kanban. Binned, it leaves the board\'s lists and can be restored with everything on it; list_bin shows what is binned.',
+    inputSchema: {
+      type: 'object',
+      properties: { action: { type: 'string', enum: ['bin', 'restore'] }, board: str('The board slug.'), number: int('The canvas or kanban number.') },
+      required: ['action', 'board', 'number'],
+      additionalProperties: false,
+    },
+    run: async ({ action, board, number }) => {
+      const r = await api('/api/v1/act', {}, { action: action === 'bin' ? 'bin_surface' : 'restore_surface', board, number })
+      return `${r.kind} ${r.board} #${r.number} ${r.done}.`
+    },
+  },
+  {
+    name: 'manage_conversation',
+    description: 'Start a conversation on a board (create) or a direct one with people (create_direct); rename or archive one; add or remove someone. A conversation is board + number, or conversation_id for a direct one. People by name or email.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['create', 'create_direct', 'rename', 'archive', 'add_member', 'remove_member'] },
+        board: str('The board slug.'),
+        number: int('The conversation number on the board.'),
+        conversation_id: str('A direct conversation\'s id.'),
+        title: str('For create, create_direct and rename.'),
+        people: { type: 'array', items: { type: 'string' }, description: 'For create_direct: who, by name or email.' },
+        person: str('For add_member and remove_member.'),
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    run: async ({ action, ...rest }) => {
+      const map = { create: 'create_conversation', create_direct: 'create_direct', rename: 'rename_conversation', archive: 'archive_conversation', add_member: 'add_member', remove_member: 'remove_member' }
+      const r = await api('/api/v1/act', {}, { action: map[action], ...rest })
+      if (action === 'create') return `Started conversation ${r.board} #${r.number}.`
+      if (action === 'create_direct') return `Started a direct conversation ${r.conversation_id}.`
+      return `Done: ${action.replace('_', ' ')}.`
+    },
+  },
+  {
+    name: 'attach_file',
+    description: 'Attach a file from this computer to a discussion or one of its replies, as the key\'s owner. Up to 3 MB; its words are read for search, as on upload. To show a file already in the archive instead, use link_file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: str('The file\'s path on this computer.'),
+        board: str('The board slug.'),
+        number: int('The discussion number.'),
+        reply_id: str('Put it on this reply instead of the discussion. Optional.'),
+        name: str('The name to show. Default: the file\'s own.'),
+      },
+      required: ['path', 'board', 'number'],
+      additionalProperties: false,
+    },
+    run: async ({ path, board, number, reply_id, name }) => {
+      const { readFile, stat } = await import('node:fs/promises')
+      const { basename, extname } = await import('node:path')
+      const info = await stat(path).catch(() => null)
+      if (!info?.isFile()) throw new ApiError(`No file at ${path}.`)
+      if (info.size > 3_000_000) throw new ApiError(`${basename(path)} is ${info.size} bytes; through the API a file may be at most 3 MB. Attach it on screen.`)
+      const bytes = await readFile(path)
+      const r = await api('/api/v1/files', {}, { board, number, reply_id, name: name || basename(path), mime: MIME[extname(path).toLowerCase()] ?? 'application/octet-stream', base64: bytes.toString('base64') })
+      return `Attached ${r.name} [${r.id}] (${r.bytes} bytes${r.text_length ? `, ${r.text_length} characters of text read` : ''}) to ${board} #${number}.`
+    },
+  },
+  {
+    name: 'link_file',
+    description: 'Show a file already in the archive on a discussion or one of its replies (the file stays where it is; this adds a place it is shown). The file id comes from search, get_keyword or read_file.',
+    inputSchema: {
+      type: 'object',
+      properties: { file_id: str('The file id.'), board: str('The board slug.'), number: int('The discussion number.'), reply_id: str('On this reply instead. Optional.') },
+      required: ['file_id', 'board', 'number'],
+      additionalProperties: false,
+    },
+    run: async (args) => {
+      await api('/api/v1/act', {}, { action: 'link_file', ...args })
+      return `Linked the file on ${args.board} #${args.number}.`
+    },
+  },
+  {
+    name: 'list_bin',
+    description: 'What is binned on a board -- discussions, canvases and kanbans -- to restore with manage_discussion or manage_surface.',
+    inputSchema: { type: 'object', properties: { board: str('The board slug.') }, required: ['board'], additionalProperties: false },
+    run: async ({ board }) => {
+      const r = await api(`/api/v1/boards/${encodeURIComponent(board)}/bin`)
+      const items = r.items ?? []
+      return items.length ? [`Binned on ${r.board}:`, ...items.map((i) => `- ${i.kind} #${i.number}: ${i.title} -- binned ${day(i.binned_at)}`)].join('\n') : `Nothing is binned on ${r.board}.`
+    },
+  },
   {
     name: 'revert',
     description: 'Take changes back, safely. With since: everything this key changed after that time -- every canvas and kanban it drew on (the inverse is appended, as undo does; nothing leaves the history) and every action point it changed (put back) or raised (dropped). With since plus board and number: only on that surface. With at plus board and number: that canvas or kanban put back as it stood at that moment, whoever changed it since. Answers with what it would do and changes nothing unless apply is true -- look first. Anything someone else changed since is left alone and reported unless force. Posts and lines are not touched: they are their author\'s (see my_changes).',
@@ -861,7 +1042,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Access to the board app, as the key\'s owner. Start a session with catch_up: the board remembers where this key read to and hands over only what is newer. To explain or pick up a subject, brief (an address or words) gives everything on it in one call. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s words -- spreadsheets as tables, Hangul documents included -- and an image as a picture). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. Safety: my_changes lists what this key wrote; revert takes it back (look first, then apply: true), or puts one surface back as it stood at a moment. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner. Start a session with catch_up: the board remembers where this key read to and hands over only what is newer. To explain or pick up a subject, brief (an address or words) gives everything on it in one call. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s words -- spreadsheets as tables, Hangul documents included -- and an image as a picture). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. Also everything else a member does: manage_discussion (bin, restore, pin, move), decide (record or withdraw a decision), withdraw (own reply or line), set_keywords, manage_surface, manage_conversation (start, rename, archive, members), attach_file (from this computer), link_file, list_bin; draw also reorders kanban columns (move_column) and links elements. Safety: my_changes lists what this key wrote; revert takes it back (look first, then apply: true), or puts one surface back as it stood at a moment. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return
