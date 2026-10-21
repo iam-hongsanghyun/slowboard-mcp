@@ -834,21 +834,24 @@ const TOOLS = [
   // ── everything else a member does (0067): one call each, the screen's rules ──
   {
     name: 'manage_discussion',
-    description: 'Bin, restore, pin, unpin or move a discussion to another board. Binning and moving follow the screen\'s rules (who may is the discussion\'s author, or an admin). A moved discussion keeps its permanent address. list_bin shows what can be restored.',
+    description: 'Bin, restore, pin, unpin or move a discussion to another board; or merge it into another discussion on the same board, and unmerge it again. Binning and moving follow the screen\'s rules (who may is the discussion\'s author, or an admin); merging is a curator\'s, needs a reason, and keeps everything -- unmerge puts it back. A moved discussion keeps its permanent address. list_bin shows what can be restored.',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['bin', 'restore', 'pin', 'unpin', 'move'] },
+        action: { type: 'string', enum: ['bin', 'restore', 'pin', 'unpin', 'move', 'merge', 'unmerge'] },
         board: str('The board slug.'),
-        number: int('The discussion number.'),
+        number: int('The discussion number: for merge, the one that goes into the other; for unmerge, the one that was merged away.'),
         to: str('For move: the board to move it to (slug).'),
+        into: int('For merge: the number of the discussion it goes into, on the same board.'),
+        reason: str('For merge (required) or unmerge: why, kept with the merge.'),
       },
       required: ['action', 'board', 'number'],
       additionalProperties: false,
     },
-    run: async ({ action, board, number, to }) => {
-      const map = { bin: 'bin_discussion', restore: 'restore_discussion', pin: 'pin', unpin: 'unpin', move: 'move_discussion' }
-      const r = await api('/api/v1/act', {}, { action: map[action], board, number, to })
+    run: async ({ action, board, number, to, into, reason }) => {
+      const map = { bin: 'bin_discussion', restore: 'restore_discussion', pin: 'pin', unpin: 'unpin', move: 'move_discussion', merge: 'merge', unmerge: 'unmerge' }
+      const r = await api('/api/v1/act', {}, { action: map[action], board, number, to, into, reason })
+      if (action === 'merge') return `Merged ${r.board} #${r.number} into #${r.into}. Undo with manage_discussion(unmerge, #${r.number}).`
       return `Discussion ${r.done ?? action}: ${r.board} #${r.number}${r.address ? ` (permanent address ${r.address})` : ''}.`
     },
   },
@@ -956,28 +959,36 @@ const TOOLS = [
   },
   {
     name: 'attach_file',
-    description: 'Attach a file from this computer to a discussion or one of its replies, as the key\'s owner. Up to 3 MB; its words are read for search, as on upload. To show a file already in the archive instead, use link_file.',
+    description: 'Attach a file from this computer, as the key\'s owner, anywhere a person attaches one: a discussion or one of its replies; a canvas (an image is drawn, any other file becomes a file card); a kanban (on a card, or as a new card); or a line in a conversation (message_id). Up to 3 MB; its words are read for search, as on upload. To show a file already in the archive instead, use link_file.',
     inputSchema: {
       type: 'object',
       properties: {
         path: str('The file\'s path on this computer.'),
         board: str('The board slug.'),
-        number: int('The discussion number.'),
-        reply_id: str('Put it on this reply instead of the discussion. Optional.'),
+        number: int('The number of the discussion, canvas or kanban.'),
+        reply_id: str('On a discussion: put it on this reply instead. Optional.'),
+        message_id: str('Instead of board and number: put it on this line of a conversation (the [id] get_item or get_conversation shows).'),
+        card: str('On a kanban: put it on this card (its [id]). Without it, a new card is made.'),
+        column: str('On a kanban, for a new card: the column (id or title). Default: the first.'),
+        x: { type: 'number', description: 'On a canvas: where, in world units. Default: beside what is there.' },
+        y: { type: 'number', description: 'On a canvas: where, in world units.' },
         name: str('The name to show. Default: the file\'s own.'),
       },
-      required: ['path', 'board', 'number'],
+      required: ['path'],
       additionalProperties: false,
     },
-    run: async ({ path, board, number, reply_id, name }) => {
+    run: async ({ path, board, number, reply_id, message_id, card, column, x, y, name }) => {
+      if (!message_id && (!board || !number)) throw new ApiError('Say where: board and number (a discussion, canvas or kanban), or message_id for a line.')
       const { readFile, stat } = await import('node:fs/promises')
       const { basename, extname } = await import('node:path')
       const info = await stat(path).catch(() => null)
       if (!info?.isFile()) throw new ApiError(`No file at ${path}.`)
       if (info.size > 3_000_000) throw new ApiError(`${basename(path)} is ${info.size} bytes; through the API a file may be at most 3 MB. Attach it on screen.`)
       const bytes = await readFile(path)
-      const r = await api('/api/v1/files', {}, { board, number, reply_id, name: name || basename(path), mime: MIME[extname(path).toLowerCase()] ?? 'application/octet-stream', base64: bytes.toString('base64') })
-      return `Attached ${r.name} [${r.id}] (${r.bytes} bytes${r.text_length ? `, ${r.text_length} characters of text read` : ''}) to ${board} #${number}.`
+      const r = await api('/api/v1/files', {}, { board, number, reply_id, message_id, card, column, x, y, name: name || basename(path), mime: MIME[extname(path).toLowerCase()] ?? 'application/octet-stream', base64: bytes.toString('base64') })
+      const where = message_id ? 'the line' : `${board} #${number}`
+      const shown = r.shown ? ` Shown as ${Object.entries(r.shown).map(([k, v]) => `${k} ${v}`).join(', ')}.` : ''
+      return `${r.existing ? 'Already there' : 'Attached'}: ${r.name} [${r.id}] (${r.bytes} bytes${r.text_length ? `, ${r.text_length} characters of text read` : ''}) on ${where}.${shown}`
     },
   },
   {
@@ -992,6 +1003,68 @@ const TOOLS = [
     run: async (args) => {
       await api('/api/v1/act', {}, { action: 'link_file', ...args })
       return `Linked the file on ${args.board} #${args.number}.`
+    },
+  },
+  {
+    name: 'manage_file',
+    description: 'A file already in the archive, by the id search, read_file, get_keyword or list_folders gives: take it off one place it is shown (unlink -- the file stays everywhere else), delete it outright (delete -- the uploader\'s only, and never a file on a canvas or kanban, which their history keeps; its bytes leave storage too), or file it into a folder or out of one (file_into, folder_id empty for out).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['unlink', 'delete', 'file_into'] },
+        file_id: str('The file id.'),
+        board: str('For unlink: the board of the discussion it is shown on.'),
+        number: int('For unlink: that discussion\'s number.'),
+        reply_id: str('For unlink: shown on this reply rather than the discussion.'),
+        message_id: str('For unlink: shown on this line instead.'),
+        folder_id: str('For file_into: the folder (from list_folders); empty to take it out of its folder.'),
+      },
+      required: ['action', 'file_id'],
+      additionalProperties: false,
+    },
+    run: async ({ action, file_id, board, number, reply_id, message_id, folder_id }) => {
+      const map = { unlink: 'unlink_file', delete: 'delete_file', file_into: 'file_into' }
+      const r = await api('/api/v1/act', {}, { action: map[action], file_id, board, number, reply_id, message_id, folder_id: folder_id || null })
+      return { unlinked: 'Took the file off there; it stays in the archive.', deleted: 'Deleted the file, and its bytes.', filed: `Filed it into folder ${r.folder_id}.`, unfiled: 'Took it out of its folder.' }[r.done] ?? `Done: ${r.done}.`
+    },
+  },
+  {
+    name: 'list_folders',
+    description: 'The folders in the file archive you can see -- yours, your teams\', boards\' and conversations\' -- each with its [id], where it is, its parent, and the files filed in it with their [ids].',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    run: async () => {
+      const r = await api('/api/v1/folders')
+      const list = r.folders ?? []
+      if (!list.length) return 'No folders yet.'
+      return list
+        .map((f) => [`- [${f.id}] ${f.name} -- ${f.space}${f.where ? ` ${f.where}` : ''}${f.parent_id ? `, inside [${f.parent_id}]` : ''}`, ...(f.files ?? []).map((x) => `    - file [${x.id}] ${x.name}`)].join('\n'))
+        .join('\n')
+    },
+  },
+  {
+    name: 'manage_folder',
+    description: 'Make, rename or remove a folder in the file archive. A folder is in a space: personal (yours), a team (by name), a board, or a conversation -- or inside another folder (parent_id), which decides the space. Removing a folder keeps its files; they leave the folder. Who may is the screen\'s rule: you may put things in that space.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['create', 'rename', 'delete'] },
+        name: str('For create and rename: the folder\'s name, up to 120 characters.'),
+        space: { type: 'string', enum: ['personal', 'team', 'board', 'conversation'], description: 'For create: where it goes.' },
+        team: str('For a team folder: the team, by name.'),
+        board: str('For a board folder, or a board conversation\'s: the board slug.'),
+        number: int('For a board conversation\'s folder: the conversation number.'),
+        conversation_id: str('For a direct conversation\'s folder: its id.'),
+        parent_id: str('For create: inside this folder instead.'),
+        folder_id: str('For rename and delete: the folder (from list_folders).'),
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    run: async ({ action, ...rest }) => {
+      const map = { create: 'create_folder', rename: 'rename_folder', delete: 'delete_folder' }
+      const r = await api('/api/v1/act', {}, { action: map[action], ...rest })
+      if (action === 'create') return `Made folder [${r.folder_id}] (${r.space}).`
+      return action === 'rename' ? 'Renamed the folder.' : 'Removed the folder; its files stay.'
     },
   },
   {
@@ -1043,7 +1116,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Access to the board app, as the key\'s owner. Start a session with catch_up: the board remembers where this key read to and hands over only what is newer. To explain or pick up a subject, brief (an address or words) gives everything on it in one call. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s words -- spreadsheets as tables, Hangul documents included -- and an image as a picture). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. Also everything else a member does: manage_discussion (bin, restore, pin, move), decide (record or withdraw a decision), withdraw (own reply or line), set_keywords, manage_surface, manage_conversation (start, rename, archive, members), attach_file (from this computer), link_file, list_bin; draw also reorders kanban columns (move_column) and links elements. Safety: my_changes lists what this key wrote; revert takes it back (look first, then apply: true), or puts one surface back as it stood at a moment. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner. Start a session with catch_up: the board remembers where this key read to and hands over only what is newer. To explain or pick up a subject, brief (an address or words) gives everything on it in one call. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s words -- spreadsheets as tables, Hangul documents included -- and an image as a picture). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. Also everything else a member does: manage_discussion (bin, restore, pin, move), decide (record or withdraw a decision), withdraw (own reply or line), set_keywords, manage_surface, manage_conversation (start, rename, archive, members), attach_file (from this computer, to a discussion, reply, line, canvas or kanban), link_file, manage_file (unlink, delete, file into a folder), list_folders, manage_folder, list_bin; manage_discussion also merges and unmerges; draw also reorders kanban columns (move_column) and links elements. Safety: my_changes lists what this key wrote; revert takes it back (look first, then apply: true), or puts one surface back as it stood at a moment. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return

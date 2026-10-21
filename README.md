@@ -38,14 +38,17 @@ so a tool call costs exactly one API call -- and a key may make 120 a minute.
 | `edit_message` | Change one of your lines, on a board or in a direct conversation |
 | `update_task` | Change an action point: open, blocked (with the reason), done or dropped; what it says; who has it; by when |
 | `rename_surface` | Rename a canvas or kanban |
-| `manage_discussion` | Bin, restore, pin, unpin, or move a discussion to another board (it keeps its permanent address) |
+| `manage_discussion` | Bin, restore, pin, unpin, or move a discussion to another board (it keeps its permanent address); merge it into another on the same board, with a reason, and unmerge it (a curator's) |
 | `decide` | Record a decision on a discussion, or withdraw one you recorded |
 | `withdraw` | Withdraw your own reply or line, or restore a withdrawn reply |
 | `set_keywords` | Set the keywords on a discussion, canvas, kanban, conversation or file |
 | `manage_surface` | Bin or restore a canvas or kanban |
 | `manage_conversation` | Start a board or direct conversation, rename or archive one, add or remove someone |
-| `attach_file` | Attach a file from this computer (up to 3 MB) to a discussion or reply |
+| `attach_file` | Attach a file from this computer (up to 3 MB) to a discussion, a reply, a line, a canvas (an image drawn, any other file a card) or a kanban (on a card, or as a new one) |
 | `link_file` | Show a file already in the archive on a discussion or reply |
+| `manage_file` | Take a file off one place it is shown, delete it outright (the uploader's, never a surface's), or file it into a folder or out of one |
+| `list_folders` | The archive's folders you can see, with the files in each |
+| `manage_folder` | Make, rename or remove a folder -- personal, a team's, a board's or a conversation's; removing keeps its files |
 | `list_bin` | What is binned on a board, to restore |
 | `my_changes` | Everything this key wrote since a time: surfaces drawn on, action points changed or raised, posts and lines |
 | `revert` | Take this key's changes back -- on every surface and action point, or one surface -- or put one canvas or kanban back as it stood at a moment. Says what it would do first; changes nothing without `apply` |
