@@ -114,7 +114,8 @@ const STATUS_LABEL = { preparing: 'Preparing', in_progress: 'In progress', block
 
 function itemText(it) {
   if (it.merged_into) return `#${it.number} was merged into #${it.merged_into}. Fetch that one instead.`
-  const head = [`#${it.number} ${it.kind}: ${it.title}`]
+  // A direct conversation has no board number, only an id.
+  const head = [`${it.number != null ? `#${it.number} ` : ''}${it.kind}: ${it.title}`]
   if (it.keywords?.length) head.push(`Keywords: ${it.keywords.join(', ')}`)
 
   if (it.kind === 'discussion') {
