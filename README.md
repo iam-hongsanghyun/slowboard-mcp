@@ -46,6 +46,7 @@ so a tool call costs exactly one API call -- and a key may make 120 a minute.
 | `manage_conversation` | Start a board or direct conversation, rename or archive one, add or remove someone |
 | `attach_file` | Attach a file from this computer (up to 3 MB) to a discussion, a reply, a line, a canvas (an image drawn, any other file a card) or a kanban (on a card, or as a new one) |
 | `link_file` | Show a file already in the archive on a discussion or reply |
+| `manage_board` | Create, rename, bin, restore or reorder boards, or delete one for good from the bin with its slug as confirmation (an admin's) |
 | `manage_file` | Take a file off one place it is shown, delete it outright (the uploader's, never a surface's), or file it into a folder or out of one |
 | `list_folders` | The archive's folders you can see, with the files in each |
 | `manage_folder` | Make, rename or remove a folder -- personal, a team's, a board's or a conversation's; removing keeps its files |

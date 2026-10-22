@@ -1006,6 +1006,35 @@ const TOOLS = [
     },
   },
   {
+    name: 'manage_board',
+    description: 'Run the boards themselves -- an admin\'s, as on screen: create one (it goes last), rename it (its address follows the name; old addresses keep working), bin or restore it, put all the boards in an order, or delete one for good. Deleting for good is only for a board already in the bin, takes everything on it -- posts, lines, canvases, kanbans and files -- and cannot be undone, so it needs confirm set to the board\'s exact slug. Check list_boards first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['create', 'rename', 'bin', 'restore', 'reorder', 'delete'] },
+        board: str('The board (its slug), for everything but create and reorder.'),
+        name: str('For create and rename: the board\'s name.'),
+        purpose: str('For create and rename: one line on what it is for. Optional.'),
+        boards: { type: 'array', items: { type: 'string' }, description: 'For reorder: every board\'s slug, in the order wanted.' },
+        confirm: str('For delete: the board\'s slug again, exactly, to say it is meant.'),
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    run: async ({ action, board, name, purpose, boards, confirm }) => {
+      const map = { create: 'create_board', rename: 'rename_board', bin: 'bin_board', restore: 'restore_board', reorder: 'reorder_boards', delete: 'purge_board' }
+      const r = await api('/api/v1/act', {}, { action: map[action], board, name, purpose, boards, confirm })
+      return {
+        created: `Made the board ${r.board}.`,
+        renamed: `Renamed; its address is now ${r.board}.`,
+        binned: `Put ${r.board} in the bin; restore brings it back with everything on it.`,
+        restored: `Restored ${r.board}.`,
+        reordered: 'Put the boards in that order.',
+        deleted: `Deleted ${r.board} for good, with everything on it.`,
+      }[r.done] ?? `Done: ${r.done}.`
+    },
+  },
+  {
     name: 'manage_file',
     description: 'A file already in the archive, by the id search, read_file, get_keyword or list_folders gives: take it off one place it is shown (unlink -- the file stays everywhere else), delete it outright (delete -- the uploader\'s only, and never a file on a canvas or kanban, which their history keeps; its bytes leave storage too), or file it into a folder or out of one (file_into, folder_id empty for out).',
     inputSchema: {
@@ -1116,7 +1145,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Access to the board app, as the key\'s owner. Start a session with catch_up: the board remembers where this key read to and hands over only what is newer. To explain or pick up a subject, brief (an address or words) gives everything on it in one call. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s words -- spreadsheets as tables, Hangul documents included -- and an image as a picture). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. Also everything else a member does: manage_discussion (bin, restore, pin, move), decide (record or withdraw a decision), withdraw (own reply or line), set_keywords, manage_surface, manage_conversation (start, rename, archive, members), attach_file (from this computer, to a discussion, reply, line, canvas or kanban), link_file, manage_file (unlink, delete, file into a folder), list_folders, manage_folder, list_bin; manage_discussion also merges and unmerges; draw also reorders kanban columns (move_column) and links elements. Safety: my_changes lists what this key wrote; revert takes it back (look first, then apply: true), or puts one surface back as it stood at a moment. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner. Start a session with catch_up: the board remembers where this key read to and hands over only what is newer. To explain or pick up a subject, brief (an address or words) gives everything on it in one call. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s words -- spreadsheets as tables, Hangul documents included -- and an image as a picture). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. Also everything else a member does: manage_discussion (bin, restore, pin, move), decide (record or withdraw a decision), withdraw (own reply or line), set_keywords, manage_surface, manage_conversation (start, rename, archive, members), attach_file (from this computer, to a discussion, reply, line, canvas or kanban), link_file, manage_file (unlink, delete, file into a folder), list_folders, manage_folder, list_bin; manage_discussion also merges and unmerges; manage_board creates, renames, bins, restores, orders and deletes boards (an admin\'s; deleting for good only from the bin, with confirm); draw also reorders kanban columns (move_column) and links elements. Safety: my_changes lists what this key wrote; revert takes it back (look first, then apply: true), or puts one surface back as it stood at a moment. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return
