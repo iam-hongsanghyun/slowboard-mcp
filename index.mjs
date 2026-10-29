@@ -17,30 +17,54 @@
  *
  * No dependencies: Node 18 or later, for the built-in fetch.
  *
- *   BOARD_API_KEY   your key, from the board's Settings, API (required)
- *   BOARD_API_URL   defaults to https://slow-board.vercel.app
+ *   BOARD_API_KEY       your key, from the board's Settings, You (required)
+ *   BOARD_API_URL       defaults to https://slow-board.vercel.app
+ *   BOARD_ORGANISATION  the organisation to use when a call names none (optional)
+ *
+ * A key is its person's and reaches every organisation they belong to (0084), so
+ * one server covers all of them: every tool takes `organisation`, and
+ * use_organisation sets the one to use until it is changed.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { createInterface } from 'node:readline'
 
-const KEY = process.env.BOARD_API_KEY ?? ''
-const BASE = (process.env.BOARD_API_URL ?? 'https://slow-board.vercel.app').replace(/\/+$/, '')
-const VERSION = '1.6.0'
+const KEY = (process.env.BOARD_API_KEY ?? '').trim()
+// `||`, not `??`: the Desktop extension passes an empty string for a field left
+// blank, and an empty address is not an address.
+const BASE = (process.env.BOARD_API_URL || 'https://slow-board.vercel.app').replace(/\/+$/, '')
+const VERSION = '1.7.0'
+
+// The organisation calls are about: one a tool call names, else the one
+// use_organisation chose, else BOARD_ORGANISATION, else none -- which is right for
+// someone in one organisation, and answered with the ones to choose from for
+// someone in several. Per call, so two calls running at once cannot cross.
+let chosen = (process.env.BOARD_ORGANISATION ?? '').trim()
+const callOrganisation = new AsyncLocalStorage()
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
 // ── the API ─────────────────────────────────────────────────────────────────
 
 class ApiError extends Error {}
 
+function organisation() {
+  return callOrganisation.getStore() || chosen
+}
+
 async function api(path, query = {}, body) {
   if (!/^cmk_[0-9a-f]{64}$/i.test(KEY)) {
-    throw new ApiError('BOARD_API_KEY is not set, or is not a key. Make one in the board\'s Settings, under API, and put it in this server\'s env.')
+    throw new ApiError('BOARD_API_KEY is not set, or is not a key. Make one in the board\'s Settings, under You, and put it in this server\'s env.')
   }
   const url = new URL(BASE + path)
   for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v))
   const res = await fetch(url, {
     method: body === undefined ? 'GET' : 'POST',
-    headers: { Authorization: `Bearer ${KEY}`, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    headers: {
+      Authorization: `Bearer ${KEY}`,
+      Accept: 'application/json',
+      ...(organisation() ? { 'X-Slowboard-Organisation': organisation() } : {}),
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(20_000),
   })
@@ -344,6 +368,30 @@ const MIME = {
 const int = (description) => ({ type: 'integer', minimum: 1, description })
 
 const TOOLS = [
+  {
+    name: 'list_organisations',
+    description: 'The organisations this key reaches: every one its owner belongs to, for a key made for all of them. Name one with organisation on any tool, or set it once with use_organisation. Someone in one organisation never needs to.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    perOrganisation: false,
+    run: async () => {
+      const r = await api('/api/v1/organisations')
+      const list = (r.organisations ?? []).map((o) => `${o.slug} -- ${o.name}${o.archived ? ' (archived: nobody has visited for a month)' : ''}${o.slug === chosen ? ' [in use]' : ''}`)
+      return list.length ? [`This key reaches ${list.length === 1 ? 'one organisation' : `${list.length} organisations`}:`, ...list].join('\n') : 'This key reaches no organisation.'
+    },
+  },
+  {
+    name: 'use_organisation',
+    description: 'Use one organisation for the calls that follow, until changed -- for someone in several. A tool\'s own organisation still wins for that call.',
+    inputSchema: { type: 'object', properties: { organisation: str('Its slug, from list_organisations.') }, required: ['organisation'], additionalProperties: false },
+    perOrganisation: false,
+    run: async ({ organisation: slug }) => {
+      const r = await api('/api/v1/organisations')
+      const o = (r.organisations ?? []).find((x) => x.slug === slug)
+      if (!o) throw new ApiError(`This key does not reach ${slug}. It reaches: ${(r.organisations ?? []).map((x) => x.slug).join(', ') || 'none'}.`)
+      chosen = o.slug
+      return `Using ${o.name} (${o.slug}) from now on.`
+    },
+  },
   {
     name: 'list_boards',
     description: 'The organisation and its boards: slug, name, and how many discussions, canvases, kanbans and conversations each holds. Start here.',
@@ -1139,6 +1187,18 @@ function send(msg) {
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n')
 }
 
+/** Every tool that reads or writes the board takes the organisation it is about. */
+function withOrganisation(t) {
+  if (t.perOrganisation === false) return t.inputSchema
+  return {
+    ...t.inputSchema,
+    properties: {
+      ...t.inputSchema.properties,
+      organisation: { type: 'string', description: 'Which organisation (its slug), for someone in several. Leave out to use the one in use; list_organisations lists them.' },
+    },
+  }
+}
+
 async function handle(msg) {
   const { id, method, params } = msg
   const isRequest = id !== undefined && id !== null
@@ -1153,7 +1213,7 @@ async function handle(msg) {
             capabilities: { tools: {} },
             serverInfo: { name: 'board', version: VERSION },
             instructions:
-              'Access to the board app, as the key\'s owner. Start a session with catch_up: the board remembers where this key read to and hands over only what is newer. To explain or pick up a subject, brief (an address or words) gives everything on it in one call. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s words -- spreadsheets as tables, Hangul documents included -- and an image as a picture). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. Also everything else a member does: manage_discussion (bin, restore, pin, move, delete from the bin), decide (record or withdraw a decision), withdraw (own reply or line), set_keywords, manage_surface, manage_conversation (start, rename, archive, members), attach_file (from this computer, to a discussion, reply, line, canvas or kanban), link_file, manage_file (unlink, delete, file into a folder), list_folders, manage_folder, list_bin; manage_discussion also merges and unmerges; manage_board creates, renames, bins, restores, orders and deletes boards (an admin\'s; deleting for good only from the bin, with confirm); draw also reorders kanban columns (move_column) and links elements. Safety: my_changes lists what this key wrote; revert takes it back (look first, then apply: true), or puts one surface back as it stood at a moment. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
+              'Access to the board app, as the key\'s owner, in every organisation they belong to. Someone in several names one with organisation on any tool, or once with use_organisation; list_organisations lists them, and a call that needs one says which there are. Start a session with catch_up: the board remembers where this key read to and hands over only what is newer. To explain or pick up a subject, brief (an address or words) gives everything on it in one call. Read: list_boards, list_items, get_item, open_ref (any board#number people paste, followed if it moved). Across boards: search (words anywhere, Korean included), recent (what moved since a time), list_actions, list_decisions, list_keywords, get_keyword, read_file (a file\'s words -- spreadsheets as tables, Hangul documents included -- and an image as a picture). To answer a question about the board, search first rather than walking every board. Write (with a key allowed to write; everything written is marked via API): create_discussion, create_surface, reply, send_message, add_task, draw. Edit (the same key, the same rule as on screen): edit_discussion, edit_reply and edit_message change only the owner\'s own posts and lines; update_task any action point where the owner may post (shared work, every change kept); a canvas or kanban is everyone\'s, so rename_surface and draw (update, delete, move_card) work on any of it, and every change is kept in its history. Also everything else a member does: manage_discussion (bin, restore, pin, move, delete from the bin), decide (record or withdraw a decision), withdraw (own reply or line), set_keywords, manage_surface, manage_conversation (start, rename, archive, members), attach_file (from this computer, to a discussion, reply, line, canvas or kanban), link_file, manage_file (unlink, delete, file into a folder), list_folders, manage_folder, list_bin; manage_discussion also merges and unmerges; manage_board creates, renames, bins, restores, orders and deletes boards (an admin\'s; deleting for good only from the bin, with confirm); draw also reorders kanban columns (move_column) and links elements. Safety: my_changes lists what this key wrote; revert takes it back (look first, then apply: true), or puts one surface back as it stood at a moment. By the [ids] get_item shows. Pick the board by slug and the thing by its number. To draw or edit, read it with get_item first. Answers are cut at max_chars; ask for more with offset only when you need it.',
           },
         })
         return
@@ -1163,7 +1223,7 @@ async function handle(msg) {
         return
       case 'tools/list':
         // Everything but `run`, which is this file's, not the protocol's.
-        send({ id, result: { tools: TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) } })
+        send({ id, result: { tools: TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: withOrganisation(t) })) } })
         return
       case 'tools/call': {
         const tool = TOOLS.find((t) => t.name === params?.name)
@@ -1173,7 +1233,11 @@ async function handle(msg) {
         }
         try {
           // A tool answers in text, or with its own content -- an image, a file.
-          const out = await tool.run(params?.arguments ?? {})
+          const { organisation: named, ...args } = params?.arguments ?? {}
+          const out = await callOrganisation.run(
+            tool.perOrganisation === false ? '' : String(named ?? '').trim(),
+            () => tool.run(tool.perOrganisation === false ? (params?.arguments ?? {}) : args),
+          )
           send({ id, result: typeof out === 'string' ? { content: [{ type: 'text', text: out }] } : out })
         } catch (e) {
           // A refusal the model can read and act on, not a protocol error.

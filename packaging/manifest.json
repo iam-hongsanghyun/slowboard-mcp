@@ -1,0 +1,45 @@
+{
+  "manifest_version": "0.2",
+  "name": "slowboard",
+  "display_name": "Slowboard",
+  "version": "1.7.0",
+  "description": "Slowboard as you: every organisation you belong to, its boards, conversations and files.",
+  "long_description": "With your key, Claude reads and writes Slowboard as you -- discussions, replies, canvases, kanbans, conversations, action points, decisions and files -- in every organisation you belong to, under the same rules as on screen. One key covers them all and follows your access as it changes.",
+  "author": {
+    "name": "Sanghyun Hong",
+    "url": "https://github.com/iam-hongsanghyun"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.mjs"],
+      "env": {
+        "BOARD_API_KEY": "${user_config.key}",
+        "BOARD_API_URL": "${user_config.url}"
+      }
+    }
+  },
+  "user_config": {
+    "key": {
+      "type": "string",
+      "title": "Your key",
+      "description": "Made on the board under Settings > You > API keys. Allow writing to post, edit and draw.",
+      "sensitive": true,
+      "required": true
+    },
+    "url": {
+      "type": "string",
+      "title": "Board address",
+      "description": "Leave blank for https://slow-board.vercel.app.",
+      "default": "",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=18.0.0" }
+  },
+  "license": "Proprietary"
+}

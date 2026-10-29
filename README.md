@@ -71,50 +71,52 @@ says which `offset` to ask for next.
 
 ## Set up
 
-1. On the board, open **Settings**, then **API**, and make a key. It is shown once,
-   and that page then shows the commands below with your key already in them.
-   A key reads exactly what you can read on the board. It writes and edits only if
-   made with **Allow writing**, and then edits only what you wrote.
+1. On the board, open **Settings**, then **You**, and make a key under **API keys**.
+   It is shown once. A key is yours, not one organisation's: it reaches every
+   organisation you belong to, and in each exactly what you can read there, as
+   that changes -- join one tomorrow and it reaches it, with nothing set up again.
+   It writes and edits only if made with **Allow writing**, and then edits only
+   what you wrote.
 2. Get this server:
 
    ```bash
    git clone https://github.com/iam-hongsanghyun/slowboard-mcp.git ~/github/slowboard-mcp
    ```
 
-3. Connect it.
+3. Connect it -- by double-clicking:
 
-   **Claude Code**
+   - **`install.command`** asks for the key, checks it with the board, and adds
+     `slowboard` to Claude Code for every project. It offers to remove older
+     servers made for one organisation each, and to add Slowboard to Claude
+     Desktop too.
+   - **`Slowboard.mcpb`** is the Claude Desktop extension on its own: Desktop opens
+     its install window and asks for the key. It runs on Desktop's own Node.
+
+   Or by hand, for Claude Code:
 
    ```bash
-   claude mcp add board --env BOARD_API_KEY=cmk_... -- node ~/github/slowboard-mcp/index.mjs
+   claude mcp add slowboard -s user -e BOARD_API_KEY=cmk_... -- node ~/github/slowboard-mcp/index.mjs
    ```
 
-   **Claude Desktop**: add this to `claude_desktop_config.json` (on a Mac, in
-   `~/Library/Application Support/Claude/`), then quit and reopen Desktop. Use the
-   full path to `node` -- a desktop app does not see your shell's PATH; `which node`
-   prints it.
+## Organisations
 
-   ```json
-   {
-     "mcpServers": {
-       "board": {
-         "command": "/usr/local/bin/node",
-         "args": ["/Users/you/github/slowboard-mcp/index.mjs"],
-         "env": { "BOARD_API_KEY": "cmk_..." }
-       }
-     }
-   }
-   ```
+Someone in several organisations names the one a call is about: every tool takes
+`organisation` (a slug), `use_organisation` sets one for the calls that follow, and
+`list_organisations` lists them. A call that needs one and has none answers with
+the ones to choose from. Someone in one organisation never needs to.
 
 ## Settings
 
 | Variable | Meaning |
 |---|---|
-| `BOARD_API_KEY` | Your key, from the board's Settings, API. Required. |
+| `BOARD_API_KEY` | Your key, from the board's Settings, You. Required. |
 | `BOARD_API_URL` | Where the board is. Defaults to `https://slow-board.vercel.app`; set `http://localhost:3000` for a local dev server. |
+| `BOARD_ORGANISATION` | The organisation to use when a call names none. Optional. |
 
 Keep the key out of anything you commit or paste. If it leaks, revoke it in
-Settings, API and make another; the old one stops working at once.
+Settings, You and make another; the old one stops working at once.
+
+After changing `index.mjs`, run `packaging/pack.sh` to rebuild `Slowboard.mcpb`.
 
 ## Why local
 
