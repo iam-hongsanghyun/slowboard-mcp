@@ -33,7 +33,7 @@ const KEY = (process.env.BOARD_API_KEY ?? '').trim()
 // `||`, not `??`: the Desktop extension passes an empty string for a field left
 // blank, and an empty address is not an address.
 const BASE = (process.env.BOARD_API_URL || 'https://slow-board.vercel.app').replace(/\/+$/, '')
-const VERSION = '1.7.0'
+const VERSION = '1.7.1'
 
 // The organisation calls are about: one a tool call names, else the one
 // use_organisation chose, else BOARD_ORGANISATION, else none -- which is right for
@@ -375,19 +375,20 @@ const TOOLS = [
     perOrganisation: false,
     run: async () => {
       const r = await api('/api/v1/organisations')
-      const list = (r.organisations ?? []).map((o) => `${o.slug} -- ${o.name}${o.archived ? ' (archived: nobody has visited for a month)' : ''}${o.slug === chosen ? ' [in use]' : ''}`)
+      const list = (r.organisations ?? []).map((o) => `${o.name} (${o.slug})${o.archived ? ' -- archived: nobody has visited for a month' : ''}${o.slug === chosen ? ' [in use]' : ''}`)
       return list.length ? [`This key reaches ${list.length === 1 ? 'one organisation' : `${list.length} organisations`}:`, ...list].join('\n') : 'This key reaches no organisation.'
     },
   },
   {
     name: 'use_organisation',
     description: 'Use one organisation for the calls that follow, until changed -- for someone in several. A tool\'s own organisation still wins for that call.',
-    inputSchema: { type: 'object', properties: { organisation: str('Its slug, from list_organisations.') }, required: ['organisation'], additionalProperties: false },
+    inputSchema: { type: 'object', properties: { organisation: str('Its name or its slug, from list_organisations.') }, required: ['organisation'], additionalProperties: false },
     perOrganisation: false,
-    run: async ({ organisation: slug }) => {
+    run: async ({ organisation: said }) => {
       const r = await api('/api/v1/organisations')
-      const o = (r.organisations ?? []).find((x) => x.slug === slug)
-      if (!o) throw new ApiError(`This key does not reach ${slug}. It reaches: ${(r.organisations ?? []).map((x) => x.slug).join(', ') || 'none'}.`)
+      const want = String(said ?? '').trim().toLowerCase()
+      const o = (r.organisations ?? []).find((x) => x.slug === want || x.name.toLowerCase() === want)
+      if (!o) throw new ApiError(`This key does not reach ${said}. It reaches: ${(r.organisations ?? []).map((x) => `${x.name} (${x.slug})`).join(', ') || 'none'}.`)
       chosen = o.slug
       return `Using ${o.name} (${o.slug}) from now on.`
     },
@@ -1194,7 +1195,7 @@ function withOrganisation(t) {
     ...t.inputSchema,
     properties: {
       ...t.inputSchema.properties,
-      organisation: { type: 'string', description: 'Which organisation (its slug), for someone in several. Leave out to use the one in use; list_organisations lists them.' },
+      organisation: { type: 'string', description: 'Which organisation, by its name or slug, for someone in several. Leave out to use the one in use; list_organisations lists them.' },
     },
   }
 }

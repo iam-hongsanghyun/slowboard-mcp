@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "slowboard",
   "display_name": "Slowboard",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Slowboard as you: every organisation you belong to, its boards, conversations and files.",
   "long_description": "With your key, Claude reads and writes Slowboard as you -- discussions, replies, canvases, kanbans, conversations, action points, decisions and files -- in every organisation you belong to, under the same rules as on screen. One key covers them all and follows your access as it changes.",
   "author": {
