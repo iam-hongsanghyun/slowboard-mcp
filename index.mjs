@@ -33,7 +33,7 @@ const KEY = (process.env.BOARD_API_KEY ?? '').trim()
 // `||`, not `??`: the Desktop extension passes an empty string for a field left
 // blank, and an empty address is not an address.
 const BASE = (process.env.BOARD_API_URL || 'https://slow-board.vercel.app').replace(/\/+$/, '')
-const VERSION = '1.7.1'
+const VERSION = '1.7.2'
 
 // The organisation calls are about: one a tool call names, else the one
 // use_organisation chose, else BOARD_ORGANISATION, else none -- which is right for
@@ -62,7 +62,9 @@ async function api(path, query = {}, body) {
     headers: {
       Authorization: `Bearer ${KEY}`,
       Accept: 'application/json',
-      ...(organisation() ? { 'X-Slowboard-Organisation': organisation() } : {}),
+      // Percent-encoded: a name may hold spaces or Hangul, and a header carries
+      // neither as it is. A slug comes through unchanged.
+      ...(organisation() ? { 'X-Slowboard-Organisation': encodeURIComponent(organisation()) } : {}),
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
